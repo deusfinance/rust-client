@@ -17,6 +17,10 @@ byteorder = ""
 borsh = "0.7.1"
 borsh-derive = "0.8.1"
 solana-program = "=1.6.6"
+thiserror = "1.0"
+num-derive = "0.3"
+num-traits = "0.2"
+num_enum = "0.5.1"
 
 [dev-dependencies]
 solana-program-test = "=1.6.6"
