@@ -9,7 +9,7 @@ use std::mem::size_of;
 #[derive(Clone, Debug, PartialEq)]
 pub enum SynchronizerInstruction {
     // Public Instructions
-    
+
     // User buys fiat assets
     // Accounts expected by this instruction:
     // 0. The user account
