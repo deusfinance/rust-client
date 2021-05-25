@@ -12,16 +12,17 @@ pub enum SynchronizerInstruction {
 
     // User buys fiat assets
     // Accounts expected by this instruction:
-    // 0. The user account
-    // 1. The mint of fiat asset
-    // 2..2+N. The N oracles accounts
+    // 0. The user fiat asset token associated account
+    // 1. The mint account of fiat asset
     BuyFor {
         multiplier: u64,
         amount: u64,
         fee: u64,
         prices: Vec<u64>
+        // TODO: vector of oracles pubkeys
     },
 
+    // TODO: fix api after buy_for
     // User sells fiat assets
     // Accounts expected by this instruction:
     // 0. The user account
