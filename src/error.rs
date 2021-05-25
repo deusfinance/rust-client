@@ -10,6 +10,10 @@ pub enum SynchronizerError {
     /// Invalid instruction
     #[error("Invalid instruction")]
     InvalidInstruction,
+    #[error("Failed mint token")]
+    FailedMint,
+    #[error("Failed transfer token")]
+    FailedTransfer,
 }
 
 impl From<SynchronizerError> for ProgramError {
