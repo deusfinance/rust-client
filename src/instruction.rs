@@ -1,6 +1,7 @@
 //! Instructions supported by the Synchronizer.
 
 use crate::error::SynchronizerError;
+use solana_program::pubkey::Pubkey;
 use solana_program::{program_error::ProgramError};
 use std::{convert::TryInto};
 use std::mem::size_of;
@@ -10,16 +11,21 @@ use std::mem::size_of;
 pub enum SynchronizerInstruction {
     // Public Instructions
 
-    // User buys fiat assets
+    // User buys fiat asset for collateral tokens
     // Accounts expected by this instruction:
-    // 0. The user fiat asset token associated account
-    // 1. The mint account of fiat asset
+    // 0. [writable] The mint account of fiat asset
+    // 1. [writable] The user collateral token associated account (user source)
+    // 2. [writable] The user fiat asset token associated account (user destination)
+    // 3. [writable] The Synchronizer collateral token associated account (Synchronizer destination)
+    // 4. [signer] The user pubkey authority
+    // 5. [signer] The Synchronizer account pubkey authority
     BuyFor {
         multiplier: u64,
         amount: u64,
         fee: u64,
-        prices: Vec<u64>
-        // TODO: vector of oracles pubkeys
+        prices: Vec<u64>,
+        // oracles: Vec<Pubkey>
+        // TODO: where is vector of oracles pubkeys?
     },
 
     // TODO: fix api after buy_for

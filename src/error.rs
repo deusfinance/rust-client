@@ -7,7 +7,10 @@ use thiserror::Error;
 /// Errors that may be returned by the Synchronizer.
 #[derive(Clone, Debug, Eq, Error, FromPrimitive, PartialEq)]
 pub enum SynchronizerError {
-    /// Invalid instruction
+    #[error("Invalid Synchronizer key")]
+    InvalidSynchronizerKey,
+    #[error("Invalid Signer")]
+    InvalidSigner,
     #[error("Invalid instruction")]
     InvalidInstruction,
     #[error("Failed mint token")]
