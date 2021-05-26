@@ -62,7 +62,7 @@ pub fn process_initialize_synchronizer_account(
     let account_data_len = synchronizer_account_info.data_len();
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
     if synchronizer.is_initialized {
-        return Err(SynchronizerError::AlreadyInited.into());
+        return Err(SynchronizerError::AlreadyInitialized.into());
     }
 
     if !rent.is_exempt(synchronizer_account_info.lamports(), account_data_len) {
@@ -98,20 +98,20 @@ pub fn process_buy_for(
     if !user_authority_info.is_signer {
         return Err(SynchronizerError::InvalidSigner.into());
     }
-
     if !synchronizer_authority_info.is_signer {
         return Err(SynchronizerError::InvalidSigner.into());
     }
-
     if !synchronizer_authority_info.key.eq(&self.synchronizer_key)  {
         return Err(SynchronizerError::InvalidSigner.into());
     }
-
-    // TODO: check sync acc inited
-
     // TODO: check oracles vector
     for oracle in account_info_iter.as_slice() {
 
+    }
+
+    let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_authority_info.data.borrow())?;
+    if !synchronizer.is_initialized {
+        return Err(SynchronizerError::NotInitialized.into());
     }
 
     let mut price = prices[0];
@@ -126,9 +126,8 @@ pub fn process_buy_for(
     let fee_amount = ((collateral_amount * fee) as f64 / SCALE as f64) as u64;
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
-    // TODO: then save in sync acc (in the end of func)
-    // remainingDollarCap = remainingDollarCap - (collateralAmount * multiplier);
-    // withdrawableFeeAmount = withdrawableFeeAmount + feeAmount;
+    synchronizer.remaining_dollar_cap = synchronizer.remaining_dollar_cap - (collateral_amount * multiplier);
+    synchronizer.withdrawable_fee_amount = synchronizer.withdrawable_fee_amount + fee_amount;
 
     match Mint::unpack(&fiat_asset_mint_info.data.borrow_mut())?.mint_authority {
         COption::Some(authority) => {
@@ -175,6 +174,8 @@ pub fn process_buy_for(
         return Err(SynchronizerError::FailedMint.into());
     }
 
+    SynchronizerData::pack(synchronizer, &mut synchronizer_authority_info.data.borrow_mut())?;
+
     Ok(())
 }
 
@@ -197,18 +198,18 @@ pub fn process_sell_for(
     if !user_authority_info.is_signer {
         return Err(SynchronizerError::InvalidSigner.into());
     }
-
     if !synchronizer_authority_info.is_signer {
         return Err(SynchronizerError::InvalidSigner.into());
     }
-
     if !synchronizer_authority_info.key.eq(&self.synchronizer_key)  {
         return Err(SynchronizerError::InvalidSigner.into());
     }
-
-    // TODO: check sync acc inited
-
     // TODO: check oracles vector
+    let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_authority_info.data.borrow())?;
+    if !synchronizer.is_initialized {
+        return Err(SynchronizerError::NotInitialized.into());
+    }
+
     let mut price = prices[0];
     for &p in prices {
         if p < price {
@@ -221,9 +222,8 @@ pub fn process_sell_for(
     let fee_amount = ((collateral_amount * fee) as f64 / SCALE as f64) as u64;
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
-    // TODO: save in sync acc in the end of func
-    // remainingDollarCap = remainingDollarCap + (collateralAmount * multiplier);
-    // withdrawableFeeAmount = withdrawableFeeAmount + feeAmount; // Добытый фи
+    synchronizer.remaining_dollar_cap = synchronizer.remaining_dollar_cap + (collateral_amount * multiplier);
+    synchronizer.withdrawable_fee_amount = synchronizer.withdrawable_fee_amount + fee_amount;
 
     // Burn fiat asset from user
     let instruction = burn (
@@ -260,6 +260,8 @@ pub fn process_sell_for(
     if self.process_token_instruction(instruction, &account_infos).is_err() {
         return Err(SynchronizerError::FailedTransfer.into());
     }
+
+    SynchronizerData::pack(synchronizer, &mut synchronizer_authority_info.data.borrow_mut())?;
 
     Ok(())
 }
@@ -336,7 +338,8 @@ impl PrintProgramError for SynchronizerError {
         E: 'static + std::error::Error + DecodeError<E> + PrintProgramError + FromPrimitive,
     {
         match self {
-            SynchronizerError::AlreadyInited => msg!("Error: Account already initialized"),
+            SynchronizerError::AlreadyInitialized => msg!("Error: Synchronizer account already initialized"),
+            SynchronizerError::NotInitialized => msg!("Error: Synchronizer account is not initialized"),
             SynchronizerError::NotRentExempt => msg!("Error: Lamport balance below rent-exempt threshold"),
             SynchronizerError::AccessDenied => msg!("Error: Access Denied"),
             SynchronizerError::BadMintAuthority => msg!("Error: Bad mint authority"),
@@ -354,17 +357,19 @@ impl PrintProgramError for SynchronizerError {
 // Unit tests
 #[cfg(test)]
 mod test {
-    use solana_program::account_info::IntoAccountInfo;
-    use solana_program::instruction::Instruction;
-    use solana_program::rent::Rent;
-    use solana_program::sysvar;
-    use solana_program::{program_error::ProgramError, program_pack::Pack};
-    use solana_sdk::account::create_is_signer_account_infos;
-    use solana_sdk::account::{Account as SolanaAccount, create_account_for_test};
-    use spl_token::instruction::initialize_account;
-    use spl_token::instruction::initialize_mint;
-    use spl_token::state::{Account, Mint};
-    use spl_token::processor::Processor as SPLTokenProcessor;
+    use solana_program::{
+        sysvar,
+        account_info::IntoAccountInfo,
+        program_error::ProgramError,
+        program_pack::Pack
+    };
+    use solana_sdk::{
+        account::{create_is_signer_account_infos,Account as SolanaAccount,create_account_for_test},
+    };
+    use spl_token::{
+        instruction::{initialize_account, initialize_mint},
+        state::{Account, Mint},
+    };
     use super::*;
 
     fn mint_minimum_balance() -> u64 {
@@ -477,7 +482,7 @@ mod test {
                 (&rent_sysvar_key, false, &mut rent_sysvar_account).into_account_info(),
             ];
             assert_eq!(
-                Err(SynchronizerError::AlreadyInited.into()),
+                Err(SynchronizerError::AlreadyInitialized.into()),
                 processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0)
             );
         }

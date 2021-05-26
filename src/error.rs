@@ -7,8 +7,10 @@ use thiserror::Error;
 /// Errors that may be returned by the Synchronizer.
 #[derive(Clone, Debug, Eq, Error, FromPrimitive, PartialEq)]
 pub enum SynchronizerError {
-    #[error("Account already initialized")]
-    AlreadyInited,
+    #[error("Synchronizer account already initialized")]
+    AlreadyInitialized,
+    #[error("Synchronizer account is not initialized")]
+    NotInitialized,
     #[error("Lamport balance below rent-exempt threshold")]
     NotRentExempt,
     #[error("Access denied")]
