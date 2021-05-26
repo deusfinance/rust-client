@@ -15,6 +15,8 @@ pub enum SynchronizerError {
     InvalidInstruction,
     #[error("Failed mint token")]
     FailedMint,
+    #[error("Failed burn token")]
+    FailedBurn,
     #[error("Failed transfer token")]
     FailedTransfer,
 }

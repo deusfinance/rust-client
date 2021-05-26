@@ -28,17 +28,21 @@ pub enum SynchronizerInstruction {
         // TODO: where is vector of oracles pubkeys?
     },
 
-    // TODO: fix api after buy_for
-    // User sells fiat assets
+    // User sells fiat assets for collateral tokens
     // Accounts expected by this instruction:
-    // 0. The user account
-    // 1. The mint of fiat asset
-    // 2..2+N. The N oracles accounts
+    // 0. [writable] The mint account of fiat asset
+    // 1. [writable] The user collateral token associated account (user destination)
+    // 2. [writable] The user fiat asset token associated account (user source)
+    // 3. [writable] The Synchronizer collateral token associated account (Synchronizer source)
+    // 4. [signer] The user pubkey authority
+    // 5. [signer] The Synchronizer account pubkey authority
     SellFor {
         multiplier: u64,
         amount: u64,
         fee: u64,
-        prices: Vec<u64>
+        prices: Vec<u64>,
+        // oracles: Vec<Pubkey>
+        // TODO: where is vector of oracles pubkeys?
     },
 
     // Admin Instructions
