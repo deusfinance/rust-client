@@ -13,16 +13,12 @@ edition = "2018"
 no-entrypoint = []
 
 [dependencies]
-byteorder = ""
-borsh = "0.7.1"
-borsh-derive = "0.8.1"
+arrayref = "0.3.6"
 thiserror = "1.0"
 num-derive = "0.3"
 num-traits = "0.2"
-num_enum = "0.5.1"
 solana-program = "=1.6.9"
-spl-token =  { version = "3.1.1", features = [ "no-entrypoint" ] }
-spl-associated-token-account = { version = "1.0.2", features = [ "no-entrypoint" ] }
+spl-token = { version = "3.1.1", features = [ "no-entrypoint" ] }
 
 [dev-dependencies]
 solana-program-test = "=1.6.9"

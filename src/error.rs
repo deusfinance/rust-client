@@ -7,8 +7,12 @@ use thiserror::Error;
 /// Errors that may be returned by the Synchronizer.
 #[derive(Clone, Debug, Eq, Error, FromPrimitive, PartialEq)]
 pub enum SynchronizerError {
-    #[error("Invalid Synchronizer key")]
-    InvalidSynchronizerKey,
+    #[error("Account already initialized")]
+    AlreadyInited,
+    #[error("Lamport balance below rent-exempt threshold")]
+    NotRentExempt,
+    #[error("Access denied")]
+    AccessDenied,
     #[error("Invalid Signer")]
     InvalidSigner,
     #[error("Invalid instruction")]

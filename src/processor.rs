@@ -1,11 +1,26 @@
-use crate::{error::SynchronizerError, instruction::{SynchronizerInstruction}};
+use crate::{
+    error::SynchronizerError,
+    instruction::{SynchronizerInstruction},
+    state::SynchronizerData
+};
 use num_traits::FromPrimitive;
-use solana_program::{account_info::{next_account_info, AccountInfo}, decode_error::DecodeError, entrypoint::ProgramResult, instruction::Instruction, msg, program_error::{PrintProgramError, ProgramError}, pubkey::Pubkey};
-use spl_token::{instruction::{mint_to, burn, transfer}};
-use spl_token::processor::Processor as SPLTokenProcessor;
+use solana_program::{
+    account_info::{next_account_info, AccountInfo},
+    decode_error::DecodeError,
+    entrypoint::ProgramResult,
+    instruction::Instruction,
+    msg,
+    program_error::{PrintProgramError, ProgramError},
+    program_pack::Pack,
+    pubkey::Pubkey,
+    rent::Rent,
+    sysvar::Sysvar
+};
+use spl_token::{instruction::{mint_to, burn, transfer}, processor::Processor as SPLTokenProcessor};
+use std::collections::HashSet;
 
 // Synchronizer program_id
-solana_program::declare_id!("9kyqhSRNj1C8jNBLM4KncjmXS1Tfac7p5o1ztdaJWMbz");
+solana_program::declare_id!("8nNo8sjfYvwouTPQXw5fJ2D6DWzcWsbeXQanDGELt4AG");
 
 /// Checks that the supplied program ID is the correct
 pub fn check_program_account(spl_token_program_id: &Pubkey) -> ProgramResult {
@@ -21,9 +36,8 @@ pub const SCALE: u64 = 1_000_000_000; // 10^9
 pub struct Processor {
     // Synchronizer account key
     pub synchronizer_key : Pubkey,
-    // USDC Token address
-    pub collateral_token_key: Pubkey,
-    // Syncronizer USDC Token associated address
+    // Set of Oracles
+    pub oracles_keys: HashSet<Pubkey>,
 }
 
 impl Processor {
@@ -34,6 +48,46 @@ fn process_token_instruction(
     instruction_account_infos: &[AccountInfo]
 ) -> ProgramResult {
     SPLTokenProcessor::process(&spl_token::id(), &instruction_account_infos, &instruction.data)
+}
+
+pub fn process_initialize_synchronizer_account(
+    &self,
+    accounts: &[AccountInfo],
+    collateral_token_key: Pubkey,
+    remaining_dollar_cap: u64,
+    withdrawable_fee_amount: u64,
+) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let synchronizer_account_info = next_account_info(account_info_iter)?;
+    let rent_account_info =next_account_info(account_info_iter)?;
+
+    if !synchronizer_account_info.owner.eq(&id()) {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    if !synchronizer_account_info.key.eq(&self.synchronizer_key)  {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    let rent = &Rent::from_account_info(rent_account_info)?;
+    let account_data_len = synchronizer_account_info.data_len();
+    let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
+    if synchronizer.is_initialized {
+        return Err(SynchronizerError::AlreadyInited.into());
+    }
+
+    if !rent.is_exempt(synchronizer_account_info.lamports(), account_data_len) {
+        return Err(SynchronizerError::NotRentExempt.into());
+    }
+
+    synchronizer.is_initialized = true;
+    synchronizer.remaining_dollar_cap = remaining_dollar_cap;
+    synchronizer.collateral_token_key = collateral_token_key;
+    synchronizer.withdrawable_fee_amount = withdrawable_fee_amount;
+
+    SynchronizerData::pack(synchronizer, &mut synchronizer_account_info.data.borrow_mut())?;
+
+    Ok(())
 }
 
 pub fn process_buy_for(
@@ -61,10 +115,14 @@ pub fn process_buy_for(
     }
 
     if !synchronizer_authority_info.key.eq(&self.synchronizer_key)  {
-        return Err(SynchronizerError::InvalidSynchronizerKey.into());
+        return Err(SynchronizerError::InvalidSigner.into());
     }
 
     // TODO: check oracles vector
+    for oracle in account_info_iter.as_slice() {
+
+    }
+
     let mut price = prices[0];
     for &p in prices {
         if p > price {
@@ -145,7 +203,7 @@ pub fn process_sell_for(
     }
 
     if !synchronizer_authority_info.key.eq(&self.synchronizer_key)  {
-        return Err(SynchronizerError::InvalidSynchronizerKey.into());
+        return Err(SynchronizerError::InvalidSigner.into());
     }
 
     // TODO: check oracles vector
@@ -236,6 +294,15 @@ pub fn process_instruction(
         }
 
         // Admin Instructions
+        SynchronizerInstruction::InitializeSynchronizerAccount {
+            collateral_token_key,
+            remaining_dollar_cap,
+            withdrawable_fee_amount
+        } => {
+            msg!("Instruction: InitializeSynchronizerAccount");
+            self.process_initialize_synchronizer_account(accounts, collateral_token_key, remaining_dollar_cap, withdrawable_fee_amount)
+        }
+
         SynchronizerInstruction::SetMinimumRequiredSignature => {
             msg!("Instruction: SetMinimumRequiredSignature");
             Ok(())
@@ -267,12 +334,16 @@ impl PrintProgramError for SynchronizerError {
         E: 'static + std::error::Error + DecodeError<E> + PrintProgramError + FromPrimitive,
     {
         match self {
-            SynchronizerError::InvalidInstruction => msg!("Error: Invalid instruction"),
-            SynchronizerError::FailedMint => msg!("Error: Failed mint token"),
-            SynchronizerError::FailedTransfer => msg!("Error: Failed transfer token"),
+            SynchronizerError::AlreadyInited => msg!("Error: Account already initialized"),
+            SynchronizerError::NotRentExempt => msg!("Error: Lamport balance below rent-exempt threshold"),
+            SynchronizerError::AccessDenied => msg!("Error: Access Denied"),
+
             SynchronizerError::InvalidSigner => msg!("Error: Invalid transaction Signer"),
-            SynchronizerError::InvalidSynchronizerKey => msg!("Error: Invalid Synchronizer key"),
+            SynchronizerError::InvalidInstruction => msg!("Error: Invalid instruction"),
+
+            SynchronizerError::FailedMint => msg!("Error: Failed mint token"),
             SynchronizerError::FailedBurn => msg!("Error: Failed burn token"),
+            SynchronizerError::FailedTransfer => msg!("Error: Failed transfer token"),
         }
     }
 }
@@ -283,6 +354,7 @@ mod test {
     use solana_program::account_info::IntoAccountInfo;
     use solana_program::instruction::Instruction;
     use solana_program::rent::Rent;
+    use solana_program::sysvar;
     use solana_program::{program_error::ProgramError, program_pack::Pack};
     use solana_sdk::account::create_is_signer_account_infos;
     use solana_sdk::account::{Account as SolanaAccount, create_account_for_test};
@@ -298,6 +370,10 @@ mod test {
 
     fn account_minimum_balance() -> u64 {
         Rent::default().minimum_balance(Account::get_packed_len())
+    }
+
+    fn init_acc_minimum_balance() -> u64 {
+        Rent::default().minimum_balance(SynchronizerData::get_packed_len())
     }
 
     fn do_token_program(
@@ -316,16 +392,127 @@ mod test {
     }
 
     #[test]
-    fn test_public_api() {
+    fn test_init_synchronizer_account() {
+        let program_id = id();
         let synchronizer_key = Pubkey::new_unique();
-        let mut synchronizer_account = SolanaAccount::default();
+        let mut synchronizer_account = SolanaAccount::new(init_acc_minimum_balance(), SynchronizerData::get_packed_len(), &program_id);
+        let rent_sysvar_key = sysvar::rent::id();
+        let mut rent_sysvar_account = create_account_for_test(&Rent::default());
+
+        let collateral_key = Pubkey::new_unique();
+
+        let processor = Processor {
+            synchronizer_key: synchronizer_key,
+            oracles_keys: [
+                Pubkey::new_unique(),
+                Pubkey::new_unique(),
+            ].iter().cloned().collect()
+        };
+
+        {
+            let mut bad_sync_acc = SolanaAccount::new(init_acc_minimum_balance() - 100, SynchronizerData::get_packed_len(), &program_id);
+            let accounts = vec![
+                (&synchronizer_key, true, &mut bad_sync_acc).into_account_info(),
+                (&rent_sysvar_key, false, &mut rent_sysvar_account).into_account_info(),
+            ];
+            assert_eq!(
+                Err(SynchronizerError::NotRentExempt.into()),
+                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0)
+            );
+        }
+
+        {
+            let fake_program_id = Pubkey::new_unique();
+            let mut bad_sync_acc = SolanaAccount::new(init_acc_minimum_balance(), SynchronizerData::get_packed_len(), &fake_program_id);
+            let accounts = vec![
+                (&synchronizer_key, true, &mut bad_sync_acc).into_account_info(),
+                (&rent_sysvar_key, false, &mut rent_sysvar_account).into_account_info(),
+            ];
+            assert_eq!(
+                Err(SynchronizerError::AccessDenied.into()), // cause of bad owner
+                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0)
+            );
+        }
+
+        {
+            let fake_sync_key = Pubkey::new_unique();
+            let mut fake_sync_acc = SolanaAccount::new(init_acc_minimum_balance(), SynchronizerData::get_packed_len(), &program_id);
+            let accounts = vec![
+                (&fake_sync_key, true, &mut fake_sync_acc).into_account_info(),
+                (&rent_sysvar_key, false, &mut rent_sysvar_account).into_account_info(),
+            ];
+            assert_eq!(
+                Err(SynchronizerError::AccessDenied.into()), // cause of bad pubkey
+                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0)
+            );
+        }
+
+        {
+            let fake_sync_key = Pubkey::new_unique();
+            let mut fake_sync_acc = SolanaAccount::new(init_acc_minimum_balance(), SynchronizerData::get_packed_len(), &fake_sync_key);
+            let accounts = vec![
+                (&fake_sync_key, true, &mut fake_sync_acc).into_account_info(),
+                (&rent_sysvar_key, false, &mut rent_sysvar_account).into_account_info(),
+            ];
+            assert_eq!(
+                Err(SynchronizerError::AccessDenied.into()),
+                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0)
+            );
+        }
+
+        {
+            let accounts = vec![
+                (&synchronizer_key, true, &mut synchronizer_account).into_account_info(),
+                (&rent_sysvar_key, false, &mut rent_sysvar_account).into_account_info(),
+            ];
+            processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0).unwrap()
+        }
+
+        {
+            let accounts = vec![
+                (&synchronizer_key, true, &mut synchronizer_account).into_account_info(),
+                (&rent_sysvar_key, false, &mut rent_sysvar_account).into_account_info(),
+            ];
+            assert_eq!(
+                Err(SynchronizerError::AlreadyInited.into()),
+                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0)
+            );
+        }
+    }
+
+    #[test]
+    fn test_public_api() {
+        let program_id = &id();
+        let synchronizer_key = Pubkey::new_unique();
+        let mut synchronizer_account = SolanaAccount::new(init_acc_minimum_balance(), SynchronizerData::get_packed_len(), &program_id);
+        let rent_sysvar_key = sysvar::rent::id();
+        let mut rent_sysvar = create_account_for_test(&Rent::default());
+        let collateral_key = Pubkey::new_unique();
+        let oracle1_key = Pubkey::new_unique();
+        let oracle2_key = Pubkey::new_unique();
+
+        let processor = Processor {
+            synchronizer_key: synchronizer_key,
+            oracles_keys: [
+                oracle1_key,
+                oracle2_key
+            ].iter().cloned().collect()
+        };
+
+        {
+            let accounts = vec![
+                (&synchronizer_key, true, &mut synchronizer_account).into_account_info(),
+                (&rent_sysvar_key, false, &mut rent_sysvar).into_account_info(),
+            ];
+            processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0).unwrap()
+        }
+
         let user_key = Pubkey::new_unique();
         let mut user_account = SolanaAccount::default();
 
         // Create and init collateral token
-        let collateral_key = Pubkey::new_unique();
         let mut collateral_asset_mint = SolanaAccount::new(mint_minimum_balance(), Mint::get_packed_len(), &spl_token::id());
-        let mut rent_sysvar = create_account_for_test(&Rent::default());
+
         do_token_program(
             initialize_mint(&spl_token::id(), &collateral_key, &synchronizer_key, None, 6).unwrap(),
             vec![&mut collateral_asset_mint, &mut rent_sysvar],
@@ -379,12 +566,6 @@ mod test {
 
         // TODO need not null balances for token accounts
 
-        // Test buy_for instruction
-        let processor = Processor {
-            synchronizer_key: synchronizer_key,
-            collateral_token_key: collateral_key,
-        };
-
         // TODO: more bad cases for buy_for
         { // Case: bad user signer
             let bad_accounts = vec![
@@ -413,7 +594,7 @@ mod test {
                 (&fake_synchronizer_key, true, &mut fake_synchronizer_account).into_account_info(),
             ];
             assert_eq!(
-                Err(SynchronizerError::InvalidSynchronizerKey.into()),
+                Err(SynchronizerError::InvalidSigner.into()),
                 processor.process_buy_for(&bad_accounts, 100, 100, 20, &vec![20, 30])
             );
         }
@@ -459,7 +640,7 @@ mod test {
                 (&fake_synchronizer_key, true, &mut fake_synchronizer_account).into_account_info(), // wrong sync acc
             ];
             assert_eq!(
-                Err(SynchronizerError::InvalidSynchronizerKey.into()),
+                Err(SynchronizerError::InvalidSigner.into()),
                 processor.process_sell_for(&bad_accounts, 100, 100, 20, &vec![20, 30])
             );
         }

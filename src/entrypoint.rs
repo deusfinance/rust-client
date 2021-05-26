@@ -2,12 +2,15 @@
 
 #![cfg(not(feature = "no-entrypoint"))]
 
-use std::str::FromStr;
-
 use crate::{error::SynchronizerError, processor::Processor};
 use solana_program::{
-    account_info::AccountInfo, entrypoint, entrypoint::ProgramResult, pubkey::Pubkey, program_error::PrintProgramError
+    account_info::AccountInfo,
+    entrypoint,
+    entrypoint::ProgramResult,
+    pubkey::Pubkey,
+    program_error::PrintProgramError
 };
+use std::str::FromStr;
 
 
 entrypoint!(process_instruction);
@@ -18,7 +21,11 @@ fn process_instruction(
 ) -> ProgramResult {
     let processor = Processor {
         synchronizer_key: Pubkey::from_str("D2YHis8gk2wRHkMEY7bULLsFUk277KdodWFR1nJ9SRgb").unwrap(),
-        collateral_token_key : Pubkey::from_str("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").unwrap(),
+        oracles_keys : [
+            Pubkey::from_str("oracle1_key").unwrap(),
+            Pubkey::from_str("oracle2_key").unwrap(),
+            Pubkey::from_str("oracle2_key").unwrap(),
+        ].iter().cloned().collect(),
     };
 
     // Processor::process_instruction(program_id, accounts, instruction_data)

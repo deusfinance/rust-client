@@ -1,10 +1,8 @@
 //! Instructions supported by the Synchronizer.
 
 use crate::error::SynchronizerError;
-use solana_program::pubkey::Pubkey;
-use solana_program::{program_error::ProgramError};
-use std::{convert::TryInto};
-use std::mem::size_of;
+use solana_program::{program_error::ProgramError, pubkey::Pubkey};
+use std::{mem::size_of, convert::TryInto};
 
 #[repr(C)]
 #[derive(Clone, Debug, PartialEq)]
@@ -18,7 +16,7 @@ pub enum SynchronizerInstruction {
     // 2. [writable] The user fiat asset token associated account (user destination)
     // 3. [writable] The Synchronizer collateral token associated account (Synchronizer destination)
     // 4. [signer] The user pubkey authority
-    // 5. [signer] The Synchronizer account pubkey authority
+    // 5. [writable, signer] The Synchronizer account authority
     BuyFor {
         multiplier: u64,
         amount: u64,
@@ -35,7 +33,7 @@ pub enum SynchronizerInstruction {
     // 2. [writable] The user fiat asset token associated account (user source)
     // 3. [writable] The Synchronizer collateral token associated account (Synchronizer source)
     // 4. [signer] The user pubkey authority
-    // 5. [signer] The Synchronizer account pubkey authority
+    // 5. [writable, signer] The Synchronizer account authority
     SellFor {
         multiplier: u64,
         amount: u64,
@@ -46,6 +44,16 @@ pub enum SynchronizerInstruction {
     },
 
     // Admin Instructions
+    // Initialization of Synchronizer account
+    // Accounts expected by this instruction:
+    // 0. [writable] The Synchronizer account authority
+    // 1. [] Rent sysvar
+    InitializeSynchronizerAccount {
+        collateral_token_key: Pubkey,
+        remaining_dollar_cap: u64,
+        withdrawable_fee_amount: u64,
+    },
+
     SetMinimumRequiredSignature,
     SetCollateralToken,
     SetRemainingDollarCap,
@@ -104,11 +112,33 @@ impl SynchronizerInstruction {
             }
 
             // Admin Instructions
-            2 => { Self::SetMinimumRequiredSignature }
-            3 => { Self::SetCollateralToken }
-            4 => { Self:: SetRemainingDollarCap }
-            5 => { Self::WithdrawFee }
-            6 => { Self::WithdrawCollateral }
+            2 => {
+                let (collateral_token_key, rest) = Self::unpack_pubkey(rest).unwrap();
+                let (remaining_dollar_cap, rest) = rest.split_at(8);
+                let remaining_dollar_cap = remaining_dollar_cap
+                    .try_into()
+                    .ok()
+                    .map(u64::from_le_bytes)
+                    .ok_or(InvalidInstruction)?;
+                let (withdrawable_fee_amount, _rest) = rest.split_at(8);
+                let withdrawable_fee_amount = withdrawable_fee_amount
+                    .try_into()
+                    .ok()
+                    .map(u64::from_le_bytes)
+                    .ok_or(InvalidInstruction)?;
+
+                Self::InitializeSynchronizerAccount {
+                    collateral_token_key,
+                    remaining_dollar_cap,
+                    withdrawable_fee_amount
+                }
+            }
+
+            3 => { Self::SetMinimumRequiredSignature }
+            4 => { Self::SetCollateralToken }
+            5 => { Self:: SetRemainingDollarCap }
+            6 => { Self::WithdrawFee }
+            7 => { Self::WithdrawCollateral }
 
             _ => return Err(SynchronizerError::InvalidInstruction.into()),
         })
@@ -119,22 +149,6 @@ impl SynchronizerInstruction {
         let mut buf = Vec::with_capacity(size_of::<Self>());
         match self {
             // Public Instructions
-            Self::SellFor {
-                multiplier,
-                amount,
-                fee,
-                ref prices
-            } => {
-                buf.push(0);
-                buf.extend_from_slice(&multiplier.to_le_bytes());
-                buf.extend_from_slice(&amount.to_le_bytes());
-                buf.extend_from_slice(&fee.to_le_bytes());
-                buf.push(prices.len().try_into().unwrap());
-                for price in prices {
-                    buf.extend_from_slice(&price.to_le_bytes());
-                }
-            },
-
             Self::BuyFor {
                 multiplier,
                 amount,
@@ -151,15 +165,50 @@ impl SynchronizerInstruction {
                 }
             },
 
-            // Admin Instructions
-            Self::SetMinimumRequiredSignature => buf.push(2),
-            Self::SetCollateralToken => buf.push(3),
-            Self::SetRemainingDollarCap => buf.push(4),
+            Self::SellFor {
+                multiplier,
+                amount,
+                fee,
+                ref prices
+            } => {
+                buf.push(1);
+                buf.extend_from_slice(&multiplier.to_le_bytes());
+                buf.extend_from_slice(&amount.to_le_bytes());
+                buf.extend_from_slice(&fee.to_le_bytes());
+                buf.push(prices.len().try_into().unwrap());
+                for price in prices {
+                    buf.extend_from_slice(&price.to_le_bytes());
+                }
+            },
 
-            Self::WithdrawFee => buf.push(5),
-            Self::WithdrawCollateral => buf.push(6),
+            // Admin Instructions
+            Self::InitializeSynchronizerAccount {
+                collateral_token_key,
+                remaining_dollar_cap,
+                withdrawable_fee_amount,
+            } => {
+                buf.push(2);
+                buf.extend_from_slice(collateral_token_key.as_ref());
+                buf.extend_from_slice(&remaining_dollar_cap.to_le_bytes());
+                buf.extend_from_slice(&withdrawable_fee_amount.to_le_bytes());
+            }
+            Self::SetMinimumRequiredSignature => buf.push(3),
+            Self::SetCollateralToken => buf.push(4),
+            Self::SetRemainingDollarCap => buf.push(5),
+            Self::WithdrawFee => buf.push(6),
+            Self::WithdrawCollateral => buf.push(7),
         };
         buf
+    }
+
+    fn unpack_pubkey(input: &[u8]) -> Result<(Pubkey, &[u8]), ProgramError> {
+        if input.len() >= 32 {
+            let (key, rest) = input.split_at(32);
+            let pk = Pubkey::new(key);
+            Ok((pk, rest))
+        } else {
+            Err(SynchronizerError::InvalidInstruction.into())
+        }
     }
 }
 
