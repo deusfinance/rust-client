@@ -341,7 +341,7 @@ mod test {
 
         // Create and init token associated accounts for synchronizer
         let synchronizer_collateral_key = Pubkey::new_unique();
-        let mut synchronizer_collateral_account = SolanaAccount::new(account_minimum_balance(), Account::get_packed_len(), &synchronizer_key);
+        let mut synchronizer_collateral_account = SolanaAccount::new(account_minimum_balance(), Account::get_packed_len(), &spl_token::id());
         do_token_program(
             initialize_account(&spl_token::id(), &synchronizer_collateral_key, &collateral_key, &synchronizer_key).unwrap(),
             vec![
@@ -354,7 +354,7 @@ mod test {
 
         // Create token associated accounts for user
         let user_collateral_key = Pubkey::new_unique();
-        let mut user_collateral_account = SolanaAccount::new(account_minimum_balance(), Account::get_packed_len(), &user_key);
+        let mut user_collateral_account = SolanaAccount::new(account_minimum_balance(), Account::get_packed_len(), &spl_token::id());
         do_token_program(
             initialize_account(&spl_token::id(), &user_collateral_key, &collateral_key, &user_key).unwrap(),
             vec![
@@ -366,7 +366,7 @@ mod test {
         ).unwrap();
 
         let user_fiat_key = Pubkey::new_unique();
-        let mut user_fiat_account = SolanaAccount::new(account_minimum_balance(), Account::get_packed_len(), &user_key);
+        let mut user_fiat_account = SolanaAccount::new(account_minimum_balance(), Account::get_packed_len(), &spl_token::id());
         do_token_program(
             initialize_account(&spl_token::id(), &user_fiat_key, &fiat_asset_key, &user_key).unwrap(),
             vec![
@@ -463,6 +463,11 @@ mod test {
                 processor.process_sell_for(&bad_accounts, 100, 100, 20, &vec![20, 30])
             );
         }
+
+        assert_eq!(
+            user_key,
+            Account::unpack_unchecked(&user_fiat_account.data).unwrap().owner
+        );
 
         {
             let accounts = vec![
