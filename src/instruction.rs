@@ -236,5 +236,7 @@ mod test {
         assert_eq!(packed, expect);
         let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
         assert_eq!(unpacked, check);
+
+        // TODO: other instruction packing tests
     }
 }

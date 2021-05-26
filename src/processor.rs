@@ -4,19 +4,8 @@ use crate::{
     state::SynchronizerData
 };
 use num_traits::FromPrimitive;
-use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    decode_error::DecodeError,
-    entrypoint::ProgramResult,
-    instruction::Instruction,
-    msg,
-    program_error::{PrintProgramError, ProgramError},
-    program_pack::Pack,
-    pubkey::Pubkey,
-    rent::Rent,
-    sysvar::Sysvar
-};
-use spl_token::{instruction::{mint_to, burn, transfer}, processor::Processor as SPLTokenProcessor};
+use solana_program::{account_info::{next_account_info, AccountInfo}, decode_error::DecodeError, entrypoint::ProgramResult, instruction::Instruction, msg, program_error::{PrintProgramError, ProgramError}, program_option::COption, program_pack::Pack, pubkey::Pubkey, rent::Rent, sysvar::Sysvar};
+use spl_token::{instruction::{mint_to, burn, transfer}, processor::Processor as SPLTokenProcessor, state::Mint};
 use std::collections::HashSet;
 
 // Synchronizer program_id
@@ -36,7 +25,7 @@ pub const SCALE: u64 = 1_000_000_000; // 10^9
 pub struct Processor {
     // Synchronizer account key
     pub synchronizer_key : Pubkey,
-    // Set of Oracles
+    // Set of Oracle pubkeys
     pub oracles_keys: HashSet<Pubkey>,
 }
 
@@ -118,6 +107,8 @@ pub fn process_buy_for(
         return Err(SynchronizerError::InvalidSigner.into());
     }
 
+    // TODO: check sync acc inited
+
     // TODO: check oracles vector
     for oracle in account_info_iter.as_slice() {
 
@@ -135,9 +126,18 @@ pub fn process_buy_for(
     let fee_amount = ((collateral_amount * fee) as f64 / SCALE as f64) as u64;
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
-    // TODO:
+    // TODO: then save in sync acc (in the end of func)
     // remainingDollarCap = remainingDollarCap - (collateralAmount * multiplier);
     // withdrawableFeeAmount = withdrawableFeeAmount + feeAmount;
+
+    match Mint::unpack(&fiat_asset_mint_info.data.borrow_mut())?.mint_authority {
+        COption::Some(authority) => {
+            if !authority.eq(&self.synchronizer_key) {
+                return Err(SynchronizerError::BadMintAuthority.into());
+            }
+        },
+        COption::None => return Err(SynchronizerError::BadMintAuthority.into()),
+    }
 
     // User send collateral token to synchronizer
     let instruction = transfer(
@@ -206,6 +206,8 @@ pub fn process_sell_for(
         return Err(SynchronizerError::InvalidSigner.into());
     }
 
+    // TODO: check sync acc inited
+
     // TODO: check oracles vector
     let mut price = prices[0];
     for &p in prices {
@@ -219,7 +221,7 @@ pub fn process_sell_for(
     let fee_amount = ((collateral_amount * fee) as f64 / SCALE as f64) as u64;
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
-    // TODO:
+    // TODO: save in sync acc in the end of func
     // remainingDollarCap = remainingDollarCap + (collateralAmount * multiplier);
     // withdrawableFeeAmount = withdrawableFeeAmount + feeAmount; // Добытый фи
 
@@ -337,6 +339,7 @@ impl PrintProgramError for SynchronizerError {
             SynchronizerError::AlreadyInited => msg!("Error: Account already initialized"),
             SynchronizerError::NotRentExempt => msg!("Error: Lamport balance below rent-exempt threshold"),
             SynchronizerError::AccessDenied => msg!("Error: Access Denied"),
+            SynchronizerError::BadMintAuthority => msg!("Error: Bad mint authority"),
 
             SynchronizerError::InvalidSigner => msg!("Error: Invalid transaction Signer"),
             SynchronizerError::InvalidInstruction => msg!("Error: Invalid instruction"),
@@ -520,7 +523,7 @@ mod test {
 
         // Create and init fiat asset token
         let fiat_asset_key = Pubkey::new_unique();
-        let mut fiat_asset_mint = SolanaAccount::new(mint_minimum_balance(), Mint::get_packed_len(), &synchronizer_key);
+        let mut fiat_asset_mint = SolanaAccount::new(mint_minimum_balance(), Mint::get_packed_len(), &spl_token::id());
         do_token_program(
             initialize_mint(&spl_token::id(), &fiat_asset_key, &synchronizer_key, None, 2).unwrap(),
             vec![&mut fiat_asset_mint, &mut rent_sysvar],

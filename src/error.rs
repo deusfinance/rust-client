@@ -13,6 +13,8 @@ pub enum SynchronizerError {
     NotRentExempt,
     #[error("Access denied")]
     AccessDenied,
+    #[error("Bad mint authority")]
+    BadMintAuthority,
     #[error("Invalid Signer")]
     InvalidSigner,
     #[error("Invalid instruction")]
