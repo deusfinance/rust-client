@@ -19,8 +19,6 @@ pub fn check_program_account(spl_token_program_id: &Pubkey) -> ProgramResult {
     Ok(())
 }
 
-pub const SCALE: u64 = 1_000_000_000; // 10^9
-
 // Constant state initialized in deploy
 pub struct Processor {
     // Synchronizer account key
@@ -117,6 +115,8 @@ pub fn process_buy_for(
         return Err(SynchronizerError::NotInitialized.into());
     }
 
+    let fiat_mint= Mint::unpack(&fiat_asset_mint_info.data.borrow_mut()).unwrap();
+
     let mut price = prices[0];
     for &p in prices {
         if p > price {
@@ -124,15 +124,21 @@ pub fn process_buy_for(
         }
     }
 
-    // TODO: Fix calculations
-    let collateral_amount= ((amount * price) as f64  / SCALE as f64) as u64;
-    let fee_amount = ((collateral_amount * fee) as f64 / SCALE as f64) as u64;
+    msg!("Process buy_for, user fiat amount: {}, collateral price: {}", amount, price);
+
+    // TODO: there is may be different decimals
+    let collateral_amount_ui=spl_token::amount_to_ui_amount(amount, fiat_mint.decimals) * spl_token::amount_to_ui_amount(price, fiat_mint.decimals);
+    let fee_amount_ui = collateral_amount_ui * spl_token::amount_to_ui_amount(fee, fiat_mint.decimals);
+    msg!("collateral_amount_ui: {}, fee_amount_ui: {}", collateral_amount_ui, fee_amount_ui);
+
+    let collateral_amount = spl_token::ui_amount_to_amount(collateral_amount_ui, fiat_mint.decimals);
+    let fee_amount = spl_token::ui_amount_to_amount(fee_amount_ui, fiat_mint.decimals);
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
-    synchronizer.remaining_dollar_cap = synchronizer.remaining_dollar_cap - (collateral_amount * multiplier);
-    synchronizer.withdrawable_fee_amount = synchronizer.withdrawable_fee_amount + fee_amount;
+    synchronizer.remaining_dollar_cap -= spl_token::ui_amount_to_amount(collateral_amount_ui * multiplier as f64, fiat_mint.decimals);
+    synchronizer.withdrawable_fee_amount += fee_amount;
 
-    match Mint::unpack(&fiat_asset_mint_info.data.borrow_mut())?.mint_authority {
+    match fiat_mint.mint_authority {
         COption::Some(authority) => {
             if !authority.eq(&self.synchronizer_key) {
                 return Err(SynchronizerError::BadMintAuthority.into());
@@ -155,9 +161,8 @@ pub fn process_buy_for(
         synchronizer_collateral_account_info.clone(),
         user_authority_info.clone(),
     ];
-    if self.process_token_instruction(instruction, &account_infos).is_err() {
-        return Err(SynchronizerError::FailedTransfer.into());
-    }
+    self.process_token_instruction(instruction, &account_infos).unwrap();
+    msg!("Transfer {} collateral tokens from user to synchronizer", collateral_amount + fee_amount);
 
     // Synchronizer mint fiat asset to user associated token account
     let instruction = mint_to(
@@ -173,9 +178,8 @@ pub fn process_buy_for(
         user_fiat_account_info.clone(),
         synchronizer_authority_info.clone(),
     ];
-    if self.process_token_instruction(instruction, &account_infos).is_err() {
-        return Err(SynchronizerError::FailedMint.into());
-    }
+    self.process_token_instruction(instruction, &account_infos).unwrap();
+    msg!("Mint {} fiat tokens to user_account", {amount});
 
     SynchronizerData::pack(synchronizer, &mut synchronizer_authority_info.data.borrow_mut())?;
 
@@ -214,11 +218,13 @@ pub fn process_sell_for(
             return Err(SynchronizerError::BadOracle.into());
         }
     }
-    
+
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_authority_info.data.borrow())?;
     if !synchronizer.is_initialized {
         return Err(SynchronizerError::NotInitialized.into());
     }
+
+    let fiat_mint= Mint::unpack(&fiat_asset_mint_info.data.borrow_mut()).unwrap();
 
     let mut price = prices[0];
     for &p in prices {
@@ -227,13 +233,19 @@ pub fn process_sell_for(
         }
     }
 
-    // TODO: Fix calculations
-    let collateral_amount= ((amount * price) as f64  / SCALE as f64) as u64;
-    let fee_amount = ((collateral_amount * fee) as f64 / SCALE as f64) as u64;
+    msg!("Process sell_for, user fiat amount: {}, collateral price: {}", amount, price);
+
+    // TODO: there is may be different decimals
+    let collateral_amount_ui=spl_token::amount_to_ui_amount(amount, fiat_mint.decimals) * spl_token::amount_to_ui_amount(price, fiat_mint.decimals);
+    let fee_amount_ui = collateral_amount_ui * spl_token::amount_to_ui_amount(fee, fiat_mint.decimals);
+    msg!("collateral_amount_ui: {}, fee_amount_ui: {}", collateral_amount_ui, fee_amount_ui);
+
+    let collateral_amount = spl_token::ui_amount_to_amount(collateral_amount_ui, fiat_mint.decimals);
+    let fee_amount = spl_token::ui_amount_to_amount(fee_amount_ui, fiat_mint.decimals);
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
-    synchronizer.remaining_dollar_cap = synchronizer.remaining_dollar_cap + (collateral_amount * multiplier);
-    synchronizer.withdrawable_fee_amount = synchronizer.withdrawable_fee_amount + fee_amount;
+    synchronizer.remaining_dollar_cap += spl_token::ui_amount_to_amount(collateral_amount_ui * multiplier as f64, fiat_mint.decimals);
+    synchronizer.withdrawable_fee_amount += fee_amount;
 
     // Burn fiat asset from user
     let instruction = burn (
@@ -249,9 +261,8 @@ pub fn process_sell_for(
         fiat_asset_mint_info.clone(),
         user_authority_info.clone(),
     ];
-    if self.process_token_instruction(instruction, &account_infos).is_err() {
-        return Err(SynchronizerError::FailedBurn.into());
-    }
+    self.process_token_instruction(instruction, &account_infos).unwrap();
+    msg!("Burn {} fiat assets from user_account", amount);
 
     // Transfer collateral token from synchronizer to user
     let instruction = transfer(
@@ -267,9 +278,8 @@ pub fn process_sell_for(
         user_collateral_account_info.clone(),
         synchronizer_authority_info.clone(),
     ];
-    if self.process_token_instruction(instruction, &account_infos).is_err() {
-        return Err(SynchronizerError::FailedTransfer.into());
-    }
+    self.process_token_instruction(instruction, &account_infos).unwrap();
+    msg!("Transfer {} collateral asset from synchronizer to user", collateral_amount - fee_amount);
 
     SynchronizerData::pack(synchronizer, &mut synchronizer_authority_info.data.borrow_mut())?;
 
@@ -359,10 +369,6 @@ impl PrintProgramError for SynchronizerError {
 
             SynchronizerError::InvalidSigner => msg!("Error: Invalid transaction Signer"),
             SynchronizerError::InvalidInstruction => msg!("Error: Invalid instruction"),
-
-            SynchronizerError::FailedMint => msg!("Error: Failed mint token"),
-            SynchronizerError::FailedBurn => msg!("Error: Failed burn token"),
-            SynchronizerError::FailedTransfer => msg!("Error: Failed transfer token"),
         }
     }
 }
@@ -510,28 +516,15 @@ mod test {
         let mut rent_sysvar = create_account_for_test(&Rent::default());
         let collateral_key = Pubkey::new_unique();
         let oracles = vec![Pubkey::new_unique(), Pubkey::new_unique()];
-
-        let processor = Processor {
-            synchronizer_key: synchronizer_key,
-            oracles_keys: oracles.iter().cloned().collect()
-        };
-
-        {
-            let accounts = vec![
-                (&synchronizer_key, true, &mut synchronizer_account).into_account_info(),
-                (&rent_sysvar_key, false, &mut rent_sysvar).into_account_info(),
-            ];
-            processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0).unwrap()
-        }
-
         let user_key = Pubkey::new_unique();
         let mut user_account = SolanaAccount::default();
 
+        // Infrastructure preparing
         // Create and init collateral token
+        let decimals = 6;
         let mut collateral_asset_mint = SolanaAccount::new(mint_minimum_balance(), Mint::get_packed_len(), &spl_token::id());
-
         do_token_program(
-            initialize_mint(&spl_token::id(), &collateral_key, &synchronizer_key, None, 6).unwrap(),
+            initialize_mint(&spl_token::id(), &collateral_key, &synchronizer_key, None, decimals).unwrap(),
             vec![&mut collateral_asset_mint, &mut rent_sysvar],
         ).unwrap();
 
@@ -539,7 +532,7 @@ mod test {
         let fiat_asset_key = Pubkey::new_unique();
         let mut fiat_asset_mint = SolanaAccount::new(mint_minimum_balance(), Mint::get_packed_len(), &spl_token::id());
         do_token_program(
-            initialize_mint(&spl_token::id(), &fiat_asset_key, &synchronizer_key, None, 2).unwrap(),
+            initialize_mint(&spl_token::id(), &fiat_asset_key, &synchronizer_key, None, decimals).unwrap(),
             vec![&mut fiat_asset_mint, &mut rent_sysvar],
         ).unwrap();
 
@@ -581,103 +574,156 @@ mod test {
             ],
         ).unwrap();
 
-        // TODO need not null balances for token accounts
+        // Mint some collateral asset to synchronizer account
+        let amount = spl_token::ui_amount_to_amount(500.0, decimals);
+        do_token_program(
+            mint_to(&spl_token::id(), &collateral_key, &synchronizer_collateral_key, &synchronizer_key, &[],amount).unwrap(),
+            vec![&mut collateral_asset_mint, &mut synchronizer_collateral_account, &mut synchronizer_account],
+        ).unwrap();
 
-        // TODO: more bad cases for buy_for
-        { // Case: bad user signer
-            let bad_accounts = vec![
-                (&fiat_asset_key, &mut fiat_asset_mint).into_account_info(),
-                (&user_collateral_key, &mut user_collateral_account).into_account_info(),
-                (&user_fiat_key, &mut user_fiat_account).into_account_info(),
-                (&synchronizer_collateral_key, &mut synchronizer_collateral_account).into_account_info(),
-                (&user_key, false, &mut user_account).into_account_info(),
-                (&synchronizer_key, true, &mut synchronizer_account).into_account_info(), // wrong sync acc
-            ];
-            assert_eq!(
-                Err(SynchronizerError::InvalidSigner.into()),
-                processor.process_buy_for(&bad_accounts, 100, 100, 20, &vec![20, 30], &oracles)
-            );
-        }
+        // Mint some fiat asset to user account
+        let amount = spl_token::ui_amount_to_amount(500.0, decimals);
+        do_token_program(
+            mint_to(&spl_token::id(), &fiat_asset_key, &user_fiat_key, &synchronizer_key, &[],amount).unwrap(),
+            vec![&mut fiat_asset_mint, &mut user_fiat_account, &mut synchronizer_account],
+        ).unwrap();
 
-        { // Case: bad synchronizer signer
-            let fake_synchronizer_key = Pubkey::new_unique();
-            let mut fake_synchronizer_account = SolanaAccount::default();
-            let bad_accounts = vec![
-                (&fiat_asset_key, &mut fiat_asset_mint).into_account_info(),
-                (&user_collateral_key, &mut user_collateral_account).into_account_info(),
-                (&user_fiat_key, &mut user_fiat_account).into_account_info(),
-                (&synchronizer_collateral_key, &mut synchronizer_collateral_account).into_account_info(),
-                (&user_key, true, &mut user_account).into_account_info(), // user is not signer
-                (&fake_synchronizer_key, true, &mut fake_synchronizer_account).into_account_info(),
-            ];
-            assert_eq!(
-                Err(SynchronizerError::InvalidSigner.into()),
-                processor.process_buy_for(&bad_accounts, 100, 100, 20, &vec![20, 30], &oracles)
-            );
-        }
+        // Prepare account_infos
+        let synchronizer_account_info = (&synchronizer_key, true, &mut synchronizer_account).into_account_info();
+        let user_account_info = (&user_key, true, &mut user_account).into_account_info();
+        let fiat_asset_mint_info = (&fiat_asset_key, &mut fiat_asset_mint).into_account_info();
+        let user_collateral_account_info = (&user_collateral_key, &mut user_collateral_account).into_account_info();
+        let user_fiat_account_info = (&user_fiat_key, &mut user_fiat_account).into_account_info();
+        let synchronizer_collateral_account_info = (&synchronizer_collateral_key, &mut synchronizer_collateral_account).into_account_info();
+        let rent_sysvar_info = (&rent_sysvar_key, false, &mut rent_sysvar).into_account_info();
 
-        {
-            let accounts = vec![
-                (&fiat_asset_key, &mut fiat_asset_mint).into_account_info(),
-                (&user_collateral_key, &mut user_collateral_account).into_account_info(),
-                (&user_fiat_key, &mut user_fiat_account).into_account_info(),
-                (&synchronizer_collateral_key, &mut synchronizer_collateral_account).into_account_info(),
-                (&user_key, true, &mut user_account).into_account_info(),
-                (&synchronizer_key, true, &mut synchronizer_account).into_account_info(),
-            ];
-            processor.process_buy_for(&accounts, 100, 100, 20, &vec![20, 30], &oracles).unwrap();
-        }
+        // Initialize Syncronizer account and processor
+        let processor = Processor {
+            synchronizer_key: synchronizer_key,
+            oracles_keys: oracles.iter().cloned().collect()
+        };
+
+        let accounts = vec![
+            synchronizer_account_info.clone(),
+            rent_sysvar_info.clone(),
+        ];
+        processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0).unwrap();
+
+        // Parameters for sell/buy instructions
+        let mul_stocks = 2;
+        let fee = spl_token::ui_amount_to_amount(0.001, decimals);
+        let prices = vec![
+            spl_token::ui_amount_to_amount(0.5, decimals),
+            spl_token::ui_amount_to_amount(0.4, decimals)
+        ];
+        let buy_price = *prices.iter().max().unwrap();
+        let sell_price = *prices.iter().min().unwrap();
 
         // Test sell_for instruction
-        // TODO: more bad cases
-        { // Case: bad user signer
-            let bad_accounts = vec![
-                (&fiat_asset_key, &mut fiat_asset_mint).into_account_info(),
-                (&user_collateral_key, &mut user_collateral_account).into_account_info(),
-                (&user_fiat_key, &mut user_fiat_account).into_account_info(),
-                (&synchronizer_collateral_key, &mut synchronizer_collateral_account).into_account_info(),
-                (&user_key, false, &mut user_account).into_account_info(), // user is not signer
-                (&synchronizer_key, true, &mut synchronizer_account).into_account_info(),
-            ];
-            assert_eq!(
-                Err(SynchronizerError::InvalidSigner.into()),
-                processor.process_sell_for(&bad_accounts, 100, 100, 20, &vec![20, 30], &oracles)
-            );
-        }
+        let sell_fiat_amount = spl_token::ui_amount_to_amount(100.0, decimals);
 
-        { // Case: bad synchronizer signer
-            let fake_synchronizer_key = Pubkey::new_unique();
-            let mut fake_synchronizer_account = SolanaAccount::default();
-            let bad_accounts = vec![
-                (&fiat_asset_key, &mut fiat_asset_mint).into_account_info(),
-                (&user_collateral_key, &mut user_collateral_account).into_account_info(),
-                (&user_fiat_key, &mut user_fiat_account).into_account_info(),
-                (&synchronizer_collateral_key, &mut synchronizer_collateral_account).into_account_info(),
-                (&user_key, true, &mut user_account).into_account_info(),
-                (&fake_synchronizer_key, true, &mut fake_synchronizer_account).into_account_info(), // wrong sync acc
-            ];
-            assert_eq!(
-                Err(SynchronizerError::InvalidSigner.into()),
-                processor.process_sell_for(&bad_accounts, 100, 100, 20, &vec![20, 30], &oracles)
-            );
-        }
+        // BadCase: bad synchronizer signer
+        let fake_synchronizer_key = Pubkey::new_unique();
+        let mut fake_synchronizer_account = SolanaAccount::default();
+        let bad_accounts = vec![
+            fiat_asset_mint_info.clone(),
+            user_collateral_account_info.clone(),
+            user_fiat_account_info.clone(),
+            synchronizer_collateral_account_info.clone(),
+            user_account_info.clone(),
+            (&fake_synchronizer_key, true, &mut fake_synchronizer_account).into_account_info(), // wrong sync acc
+        ];
+        assert_eq!(
+            Err(SynchronizerError::InvalidSigner.into()),
+            processor.process_sell_for(&bad_accounts, mul_stocks, sell_fiat_amount, fee, &prices, &oracles)
+        );
 
         assert_eq!(
             user_key,
-            Account::unpack_unchecked(&user_fiat_account.data).unwrap().owner
+            Account::unpack_unchecked(&user_fiat_account_info.data.borrow()).unwrap().owner
         );
 
-        {
-            let accounts = vec![
-                (&fiat_asset_key, &mut fiat_asset_mint).into_account_info(),
-                (&user_collateral_key, &mut user_collateral_account).into_account_info(),
-                (&user_fiat_key, &mut user_fiat_account).into_account_info(),
-                (&synchronizer_collateral_key, &mut synchronizer_collateral_account).into_account_info(),
-                (&user_key, true, &mut user_account).into_account_info(),
-                (&synchronizer_key, true, &mut synchronizer_account).into_account_info(),
-            ];
-            processor.process_sell_for(&accounts, 100, 100, 20, &vec![20, 30], &oracles).unwrap();
-        }
+        let synch_collateral_balance_before = Account::unpack_unchecked(&synchronizer_collateral_account_info.data.borrow()).unwrap().amount;
+        let user_collateral_balance_before = Account::unpack_unchecked(&user_collateral_account_info.data.borrow()).unwrap().amount;
+        let user_fiat_balance_before = Account::unpack_unchecked(&user_fiat_account_info.data.borrow()).unwrap().amount;
+        let accounts = vec![
+            fiat_asset_mint_info.clone(),
+            user_collateral_account_info.clone(),
+            user_fiat_account_info.clone(),
+            synchronizer_collateral_account_info.clone(),
+            user_account_info.clone(),
+            synchronizer_account_info.clone(),
+        ];
+        processor.process_sell_for(&accounts, mul_stocks, sell_fiat_amount, fee, &prices, &oracles).unwrap();
+
+        // Check balances afet sell_for
+        assert_eq!(
+            Account::unpack_unchecked(&user_fiat_account_info.data.borrow()).unwrap().amount,
+            user_fiat_balance_before - sell_fiat_amount
+        );
+
+        let collateral_amount_ui = spl_token::amount_to_ui_amount(sell_fiat_amount, decimals) * spl_token::amount_to_ui_amount(sell_price, decimals);
+        let collateral_fee_ui = collateral_amount_ui * spl_token::amount_to_ui_amount(fee, decimals);
+        let collateral_balance_diff = spl_token::ui_amount_to_amount(collateral_amount_ui - collateral_fee_ui, decimals);
+        assert_eq!(
+            Account::unpack_unchecked(&synchronizer_collateral_account_info.data.borrow()).unwrap().amount,
+            synch_collateral_balance_before - collateral_balance_diff
+        );
+        assert_eq!(
+            Account::unpack_unchecked(&user_collateral_account_info.data.borrow()).unwrap().amount,
+            user_collateral_balance_before + collateral_balance_diff
+        );
+
+        // Test buy_for instruction
+        let buy_fiat_amount = spl_token::ui_amount_to_amount(50.0, decimals);
+
+        // Case: bad synchronizer signer
+        let fake_synchronizer_key = Pubkey::new_unique();
+        let mut fake_synchronizer_account = SolanaAccount::default();
+        let bad_accounts = vec![
+            fiat_asset_mint_info.clone(),
+            user_collateral_account_info.clone(),
+            user_fiat_account_info.clone(),
+            synchronizer_collateral_account_info.clone(),
+            user_account_info.clone(),
+            (&fake_synchronizer_key, true, &mut fake_synchronizer_account).into_account_info(),
+        ];
+        assert_eq!(
+            Err(SynchronizerError::InvalidSigner.into()),
+            processor.process_buy_for(&bad_accounts, mul_stocks, buy_fiat_amount, fee, &prices, &oracles)
+        );
+
+        // Good case
+        let synch_collateral_balance_before = Account::unpack_unchecked(&synchronizer_collateral_account_info.data.borrow()).unwrap().amount;
+        let user_collateral_balance_before = Account::unpack_unchecked(&user_collateral_account_info.data.borrow()).unwrap().amount;
+        let user_fiat_balance_before = Account::unpack_unchecked(&user_fiat_account_info.data.borrow()).unwrap().amount;
+        let accounts = vec![
+            fiat_asset_mint_info.clone(),
+            user_collateral_account_info.clone(),
+            user_fiat_account_info.clone(),
+            synchronizer_collateral_account_info.clone(),
+            user_account_info.clone(),
+            synchronizer_account_info.clone(),
+        ];
+        processor.process_buy_for(&accounts, mul_stocks, buy_fiat_amount, fee, &prices, &oracles).unwrap();
+
+        // Check balances afet buy_for
+        assert_eq!(
+            Account::unpack_unchecked(&user_fiat_account_info.data.borrow()).unwrap().amount,
+            user_fiat_balance_before + buy_fiat_amount
+        );
+
+        let collateral_amount_ui = spl_token::amount_to_ui_amount(buy_fiat_amount, decimals) * spl_token::amount_to_ui_amount(buy_price, decimals);
+        let collateral_fee_ui = collateral_amount_ui * spl_token::amount_to_ui_amount(fee, decimals);
+        let collateral_balance_diff = spl_token::ui_amount_to_amount(collateral_amount_ui + collateral_fee_ui, decimals);
+        assert_eq!(
+            Account::unpack_unchecked(&synchronizer_collateral_account_info.data.borrow()).unwrap().amount,
+            synch_collateral_balance_before + collateral_balance_diff
+        );
+        assert_eq!(
+            Account::unpack_unchecked(&user_collateral_account_info.data.borrow()).unwrap().amount,
+            user_collateral_balance_before - collateral_balance_diff
+        );
     }
 
     #[test]

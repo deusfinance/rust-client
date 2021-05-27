@@ -91,7 +91,7 @@ impl SynchronizerInstruction {
                     .ok_or(InvalidInstruction)?;
 
                 let (&prices_num, rest) = rest.split_first().ok_or(InvalidInstruction)?;
-                let mut prices = Vec::with_capacity(prices_num.try_into().unwrap());
+                let mut prices = Vec::with_capacity(prices_num as usize);
                 let (price_slice, rest) = rest.split_at(prices_num as usize * 8);
                 for i in 0..prices_num {
                     let price = price_slice
@@ -103,10 +103,16 @@ impl SynchronizerInstruction {
                 }
 
                 let (&oracles_num, rest) = rest.split_first().ok_or(InvalidInstruction)?;
-                let mut oracles = Vec::with_capacity(oracles_num.try_into().unwrap());
+                let mut oracles = Vec::with_capacity(oracles_num as usize);
                 let (oracles_slice, _rest) = rest.split_at(oracles_num as usize * 32);
                 for i in 0..oracles_num {
-                    let (oracle, oracles_slice) = Self::unpack_pubkey(oracles_slice).unwrap();
+                    // let (oracle, oracles_slice) = Self::unpack_pubkey(oracles_slice).unwrap();
+                    let oracle = oracles_slice.get(i as usize * 32 .. i as usize * 32 + 32).unwrap();
+                    let (oracle, _) = Self::unpack_pubkey(oracle).unwrap();
+                        // .and_then(|slice| Self::unpack_pubkey(slice).into()).unwrap();
+                        // .map(Self::unpack_pubkey)
+                        // .ok_or(InvalidInstruction)?;
+                    // oracle = oracle.ok();
                     oracles.push(oracle);
                 }
 
@@ -241,7 +247,10 @@ mod test {
             amount: 215,
             fee: 100,
             prices: vec![211, 123, 300],
-            oracles: vec![Pubkey::from_str("D2YHis8gk2wRHkMEY7bULLsFUk277KdodWFR1nJ9SRgb").unwrap()]
+            oracles: vec![
+                Pubkey::from_str("D2YHis8gk2wRHkMEY7bULLsFUk277KdodWFR1nJ9SRgb").unwrap(),
+                Pubkey::from_str("EExYKmkDnS5HuUhb33e5ZeGHdZPCdQKJcQXDQTyWSb4X").unwrap()
+            ]
         };
         let packed = check.pack();
         let mut expect = Vec::from([0u8]);
@@ -252,9 +261,9 @@ mod test {
         expect.extend_from_slice(&[211, 0, 0, 0, 0, 0, 0, 0]);
         expect.extend_from_slice(&[123, 0, 0, 0, 0, 0, 0, 0]);
         expect.extend_from_slice(&[44, 1, 0, 0, 0, 0, 0, 0]);
-        expect.extend_from_slice(&[1]);
+        expect.extend_from_slice(&[2]);
         expect.extend_from_slice(&[178, 177, 51, 164, 92, 30, 126, 138, 210, 146, 214, 193, 145, 103, 57, 185, 60, 120, 46, 119, 37, 184, 251, 108, 93, 90, 88, 249, 49, 176, 59, 160]);
-
+        expect.extend_from_slice(&[196, 187, 71, 168, 43, 226, 204, 130, 198, 182, 91, 6, 240, 228, 232, 228, 89, 217, 65, 173, 197, 180, 93, 22, 141, 243, 103, 79, 210, 0, 211, 76]);
         assert_eq!(packed, expect);
         let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
         assert_eq!(unpacked, check);

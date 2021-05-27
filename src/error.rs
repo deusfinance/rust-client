@@ -23,12 +23,6 @@ pub enum SynchronizerError {
     InvalidSigner,
     #[error("Invalid instruction")]
     InvalidInstruction,
-    #[error("Failed mint token")]
-    FailedMint,
-    #[error("Failed burn token")]
-    FailedBurn,
-    #[error("Failed transfer token")]
-    FailedTransfer,
 }
 
 impl From<SynchronizerError> for ProgramError {
