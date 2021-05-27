@@ -22,8 +22,7 @@ pub enum SynchronizerInstruction {
         amount: u64,
         fee: u64,
         prices: Vec<u64>,
-        // oracles: Vec<Pubkey>
-        // TODO: where is vector of oracles pubkeys?
+        oracles: Vec<Pubkey>,
     },
 
     // User sells fiat assets for collateral tokens
@@ -39,8 +38,7 @@ pub enum SynchronizerInstruction {
         amount: u64,
         fee: u64,
         prices: Vec<u64>,
-        // oracles: Vec<Pubkey>
-        // TODO: where is vector of oracles pubkeys?
+        oracles: Vec<Pubkey>,
     },
 
     // Admin Instructions
@@ -92,10 +90,10 @@ impl SynchronizerInstruction {
                     .map(u64::from_le_bytes)
                     .ok_or(InvalidInstruction)?;
 
-                let (&oracles_num, rest) = rest.split_first().ok_or(InvalidInstruction)?;
-                let mut prices = Vec::with_capacity(oracles_num.try_into().unwrap());
-                let (price_slice, _rest) = rest.split_at(oracles_num as usize * 8);
-                for i in 0..oracles_num {
+                let (&prices_num, rest) = rest.split_first().ok_or(InvalidInstruction)?;
+                let mut prices = Vec::with_capacity(prices_num.try_into().unwrap());
+                let (price_slice, rest) = rest.split_at(prices_num as usize * 8);
+                for i in 0..prices_num {
                     let price = price_slice
                         .get(i as usize * 8 .. i as usize * 8 + 8)
                         .and_then(|slice| slice.try_into().ok())
@@ -104,9 +102,17 @@ impl SynchronizerInstruction {
                     prices.push(price);
                 }
 
+                let (&oracles_num, rest) = rest.split_first().ok_or(InvalidInstruction)?;
+                let mut oracles = Vec::with_capacity(oracles_num.try_into().unwrap());
+                let (oracles_slice, _rest) = rest.split_at(oracles_num as usize * 32);
+                for i in 0..oracles_num {
+                    let (oracle, oracles_slice) = Self::unpack_pubkey(oracles_slice).unwrap();
+                    oracles.push(oracle);
+                }
+
                 match tag {
-                    0 => Self::BuyFor {multiplier, amount, fee, prices},
-                    1 => Self::SellFor {multiplier, amount, fee, prices},
+                    0 => Self::BuyFor {multiplier, amount, fee, prices, oracles},
+                    1 => Self::SellFor {multiplier, amount, fee, prices, oracles},
                     _ => unreachable!(),
                 }
             }
@@ -153,7 +159,8 @@ impl SynchronizerInstruction {
                 multiplier,
                 amount,
                 fee,
-                ref prices
+                ref prices,
+                ref oracles
             } => {
                 buf.push(0);
                 buf.extend_from_slice(&multiplier.to_le_bytes());
@@ -163,13 +170,18 @@ impl SynchronizerInstruction {
                 for price in prices {
                     buf.extend_from_slice(&price.to_le_bytes());
                 }
+                buf.push(oracles.len().try_into().unwrap());
+                for key in oracles {
+                    buf.extend_from_slice(key.as_ref());
+                }
             },
 
             Self::SellFor {
                 multiplier,
                 amount,
                 fee,
-                ref prices
+                ref prices,
+                ref oracles
             } => {
                 buf.push(1);
                 buf.extend_from_slice(&multiplier.to_le_bytes());
@@ -178,6 +190,10 @@ impl SynchronizerInstruction {
                 buf.push(prices.len().try_into().unwrap());
                 for price in prices {
                     buf.extend_from_slice(&price.to_le_bytes());
+                }
+                buf.push(oracles.len().try_into().unwrap());
+                for key in oracles {
+                    buf.extend_from_slice(key.as_ref());
                 }
             },
 
@@ -214,6 +230,8 @@ impl SynchronizerInstruction {
 
 #[cfg(test)]
 mod test {
+    use std::str::FromStr;
+
     use super::*;
 
     #[test]
@@ -222,7 +240,8 @@ mod test {
             multiplier: 5,
             amount: 215,
             fee: 100,
-            prices: vec![211, 123, 300]
+            prices: vec![211, 123, 300],
+            oracles: vec![Pubkey::from_str("D2YHis8gk2wRHkMEY7bULLsFUk277KdodWFR1nJ9SRgb").unwrap()]
         };
         let packed = check.pack();
         let mut expect = Vec::from([0u8]);
@@ -233,6 +252,9 @@ mod test {
         expect.extend_from_slice(&[211, 0, 0, 0, 0, 0, 0, 0]);
         expect.extend_from_slice(&[123, 0, 0, 0, 0, 0, 0, 0]);
         expect.extend_from_slice(&[44, 1, 0, 0, 0, 0, 0, 0]);
+        expect.extend_from_slice(&[1]);
+        expect.extend_from_slice(&[178, 177, 51, 164, 92, 30, 126, 138, 210, 146, 214, 193, 145, 103, 57, 185, 60, 120, 46, 119, 37, 184, 251, 108, 93, 90, 88, 249, 49, 176, 59, 160]);
+
         assert_eq!(packed, expect);
         let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
         assert_eq!(unpacked, check);

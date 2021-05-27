@@ -85,7 +85,8 @@ pub fn process_buy_for(
     multiplier: u64,
     amount: u64,
     fee: u64,
-    prices: &Vec<u64>
+    prices: &Vec<u64>,
+    oracles: &Vec<Pubkey>
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let fiat_asset_mint_info = next_account_info(account_info_iter)?;
@@ -104,9 +105,11 @@ pub fn process_buy_for(
     if !synchronizer_authority_info.key.eq(&self.synchronizer_key)  {
         return Err(SynchronizerError::InvalidSigner.into());
     }
-    // TODO: check oracles vector
-    for oracle in account_info_iter.as_slice() {
 
+    for oracle in oracles {
+        if !self.oracles_keys.contains(oracle) {
+            return Err(SynchronizerError::BadOracle.into());
+        }
     }
 
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_authority_info.data.borrow())?;
@@ -185,7 +188,8 @@ pub fn process_sell_for(
     multiplier: u64,
     amount: u64,
     fee: u64,
-    prices: &Vec<u64>
+    prices: &Vec<u64>,
+    oracles: &Vec<Pubkey>
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let fiat_asset_mint_info = next_account_info(account_info_iter)?;
@@ -204,7 +208,13 @@ pub fn process_sell_for(
     if !synchronizer_authority_info.key.eq(&self.synchronizer_key)  {
         return Err(SynchronizerError::InvalidSigner.into());
     }
-    // TODO: check oracles vector
+
+    for oracle in oracles {
+        if !self.oracles_keys.contains(oracle) {
+            return Err(SynchronizerError::BadOracle.into());
+        }
+    }
+    
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_authority_info.data.borrow())?;
     if !synchronizer.is_initialized {
         return Err(SynchronizerError::NotInitialized.into());
@@ -282,19 +292,21 @@ pub fn process_instruction(
             multiplier,
             amount,
             fee,
-            ref prices
+            ref prices,
+            ref oracles
         } => {
             msg!("Instruction: BuyFor");
-            self.process_buy_for(accounts, multiplier, amount, fee, prices)
+            self.process_buy_for(accounts, multiplier, amount, fee, prices, oracles)
         }
         SynchronizerInstruction::SellFor {
             multiplier,
             amount,
             fee,
-            ref prices
+            ref prices,
+            ref oracles
         } => {
             msg!("Instruction: SellFor");
-            self.process_sell_for(accounts, multiplier, amount, fee, prices)
+            self.process_sell_for(accounts, multiplier, amount, fee, prices, oracles)
         }
 
         // Admin Instructions
@@ -342,6 +354,7 @@ impl PrintProgramError for SynchronizerError {
             SynchronizerError::NotInitialized => msg!("Error: Synchronizer account is not initialized"),
             SynchronizerError::NotRentExempt => msg!("Error: Lamport balance below rent-exempt threshold"),
             SynchronizerError::AccessDenied => msg!("Error: Access Denied"),
+            SynchronizerError::BadOracle => msg!("Error: signer is not an oracle"),
             SynchronizerError::BadMintAuthority => msg!("Error: Bad mint authority"),
 
             SynchronizerError::InvalidSigner => msg!("Error: Invalid transaction Signer"),
@@ -496,15 +509,11 @@ mod test {
         let rent_sysvar_key = sysvar::rent::id();
         let mut rent_sysvar = create_account_for_test(&Rent::default());
         let collateral_key = Pubkey::new_unique();
-        let oracle1_key = Pubkey::new_unique();
-        let oracle2_key = Pubkey::new_unique();
+        let oracles = vec![Pubkey::new_unique(), Pubkey::new_unique()];
 
         let processor = Processor {
             synchronizer_key: synchronizer_key,
-            oracles_keys: [
-                oracle1_key,
-                oracle2_key
-            ].iter().cloned().collect()
+            oracles_keys: oracles.iter().cloned().collect()
         };
 
         {
@@ -586,7 +595,7 @@ mod test {
             ];
             assert_eq!(
                 Err(SynchronizerError::InvalidSigner.into()),
-                processor.process_buy_for(&bad_accounts, 100, 100, 20, &vec![20, 30])
+                processor.process_buy_for(&bad_accounts, 100, 100, 20, &vec![20, 30], &oracles)
             );
         }
 
@@ -603,7 +612,7 @@ mod test {
             ];
             assert_eq!(
                 Err(SynchronizerError::InvalidSigner.into()),
-                processor.process_buy_for(&bad_accounts, 100, 100, 20, &vec![20, 30])
+                processor.process_buy_for(&bad_accounts, 100, 100, 20, &vec![20, 30], &oracles)
             );
         }
 
@@ -616,7 +625,7 @@ mod test {
                 (&user_key, true, &mut user_account).into_account_info(),
                 (&synchronizer_key, true, &mut synchronizer_account).into_account_info(),
             ];
-            processor.process_buy_for(&accounts, 100, 100, 20, &vec![20, 30]).unwrap();
+            processor.process_buy_for(&accounts, 100, 100, 20, &vec![20, 30], &oracles).unwrap();
         }
 
         // Test sell_for instruction
@@ -632,7 +641,7 @@ mod test {
             ];
             assert_eq!(
                 Err(SynchronizerError::InvalidSigner.into()),
-                processor.process_sell_for(&bad_accounts, 100, 100, 20, &vec![20, 30])
+                processor.process_sell_for(&bad_accounts, 100, 100, 20, &vec![20, 30], &oracles)
             );
         }
 
@@ -649,7 +658,7 @@ mod test {
             ];
             assert_eq!(
                 Err(SynchronizerError::InvalidSigner.into()),
-                processor.process_sell_for(&bad_accounts, 100, 100, 20, &vec![20, 30])
+                processor.process_sell_for(&bad_accounts, 100, 100, 20, &vec![20, 30], &oracles)
             );
         }
 
@@ -667,7 +676,7 @@ mod test {
                 (&user_key, true, &mut user_account).into_account_info(),
                 (&synchronizer_key, true, &mut synchronizer_account).into_account_info(),
             ];
-            processor.process_sell_for(&accounts, 100, 100, 20, &vec![20, 30]).unwrap();
+            processor.process_sell_for(&accounts, 100, 100, 20, &vec![20, 30], &oracles).unwrap();
         }
     }
 

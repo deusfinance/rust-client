@@ -15,6 +15,8 @@ pub enum SynchronizerError {
     NotRentExempt,
     #[error("Access denied")]
     AccessDenied,
+    #[error("Signer is not an oracle")]
+    BadOracle,
     #[error("Bad mint authority")]
     BadMintAuthority,
     #[error("Invalid Signer")]
