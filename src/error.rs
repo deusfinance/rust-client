@@ -13,6 +13,8 @@ pub enum SynchronizerError {
     NotInitialized,
     #[error("Lamport balance below rent-exempt threshold")]
     NotRentExempt,
+    #[error("Insufficient funds")]
+    InsufficientFunds,
     #[error("Access denied")]
     AccessDenied,
     #[error("Signer is not an oracle")]

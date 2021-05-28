@@ -5,7 +5,7 @@ use crate::{
 };
 use num_traits::FromPrimitive;
 use solana_program::{account_info::{next_account_info, AccountInfo}, decode_error::DecodeError, entrypoint::ProgramResult, instruction::Instruction, msg, program_error::{PrintProgramError, ProgramError}, program_option::COption, program_pack::Pack, pubkey::Pubkey, rent::Rent, sysvar::Sysvar};
-use spl_token::{instruction::{mint_to, burn, transfer}, processor::Processor as SPLTokenProcessor, state::Mint};
+use spl_token::{instruction::{mint_to, burn, transfer}, processor::Processor as SPLTokenProcessor, state::{Account, Mint}};
 use std::collections::HashSet;
 
 // Synchronizer program_id
@@ -150,8 +150,9 @@ pub fn process_buy_for(
     let fee_amount = spl_token::ui_amount_to_amount(fee_amount_ui, decimals);
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
-    synchronizer.remaining_dollar_cap -= spl_token::ui_amount_to_amount(collateral_amount_ui * multiplier as f64, decimals);
-    synchronizer.withdrawable_fee_amount += fee_amount;
+    if Account::unpack(&user_collateral_account_info.data.borrow()).unwrap().amount < (collateral_amount + fee_amount) {
+        return Err(SynchronizerError::InsufficientFunds.into());
+    }
 
     // User send collateral token to synchronizer
     let instruction = transfer(
@@ -187,6 +188,8 @@ pub fn process_buy_for(
     self.process_token_instruction(instruction, &account_infos).unwrap();
     msg!("Mint {} fiat tokens to user_account", {amount});
 
+    synchronizer.remaining_dollar_cap -= spl_token::ui_amount_to_amount(collateral_amount_ui * multiplier as f64, decimals);
+    synchronizer.withdrawable_fee_amount += fee_amount;
     SynchronizerData::pack(synchronizer, &mut synchronizer_authority_info.data.borrow_mut())?;
 
     Ok(())
@@ -252,8 +255,9 @@ pub fn process_sell_for(
     let fee_amount = spl_token::ui_amount_to_amount(fee_amount_ui, decimals);
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
-    synchronizer.remaining_dollar_cap += spl_token::ui_amount_to_amount(collateral_amount_ui * multiplier as f64, decimals);
-    synchronizer.withdrawable_fee_amount += fee_amount;
+    if Account::unpack(&synchronizer_collateral_account_info.data.borrow()).unwrap().amount < (collateral_amount - fee_amount) {
+        return Err(SynchronizerError::InsufficientFunds.into());
+    }
 
     // Burn fiat asset from user
     let instruction = burn (
@@ -289,6 +293,8 @@ pub fn process_sell_for(
     self.process_token_instruction(instruction, &account_infos).unwrap();
     msg!("Transfer {} collateral asset from synchronizer to user", collateral_amount - fee_amount);
 
+    synchronizer.remaining_dollar_cap += spl_token::ui_amount_to_amount(collateral_amount_ui * multiplier as f64, decimals);
+    synchronizer.withdrawable_fee_amount += fee_amount;
     SynchronizerData::pack(synchronizer, &mut synchronizer_authority_info.data.borrow_mut())?;
 
     Ok(())
@@ -372,6 +378,7 @@ impl PrintProgramError for SynchronizerError {
             SynchronizerError::AlreadyInitialized => msg!("Error: Synchronizer account already initialized"),
             SynchronizerError::NotInitialized => msg!("Error: Synchronizer account is not initialized"),
             SynchronizerError::NotRentExempt => msg!("Error: Lamport balance below rent-exempt threshold"),
+            SynchronizerError::InsufficientFunds => msg!("Error: Insufficient funds"),
             SynchronizerError::AccessDenied => msg!("Error: Access Denied"),
 
             SynchronizerError::BadOracle => msg!("Error: signer is not an oracle"),
@@ -396,10 +403,7 @@ mod test {
     use solana_sdk::{
         account::{create_is_signer_account_infos,Account as SolanaAccount,create_account_for_test},
     };
-    use spl_token::{
-        instruction::{initialize_account, initialize_mint},
-        state::{Account, Mint},
-    };
+    use spl_token::{instruction::{initialize_account, initialize_mint}, state::{Account, Mint}};
     use super::*;
 
     fn mint_minimum_balance() -> u64 {
@@ -627,8 +631,6 @@ mod test {
             spl_token::ui_amount_to_amount(0.5, decimals),
             spl_token::ui_amount_to_amount(0.4, decimals)
         ];
-        let buy_price = *prices.iter().max().unwrap();
-        let sell_price = *prices.iter().min().unwrap();
 
         // Test sell_for instruction
         let sell_fiat_amount = spl_token::ui_amount_to_amount(100.0, decimals);
@@ -752,6 +754,20 @@ mod test {
         let synchronizer = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
         assert_eq!(synchronizer.remaining_dollar_cap, dollar_cap_before - (collateral_amount * mul_stocks));
         assert_eq!(synchronizer.withdrawable_fee_amount, withdrawable_fee_before + collateral_fee);
+
+        // BadCase: too big buy amount
+        let buy_fiat_amount = spl_token::ui_amount_to_amount(999999.0, decimals);
+        assert_eq!(
+            Err(SynchronizerError::InsufficientFunds.into()),
+            processor.process_buy_for(&accounts, mul_stocks, buy_fiat_amount, fee, &prices, &oracles)
+        );
+
+        // BadCase: too big sell amount
+        let sell_fiat_amount = spl_token::ui_amount_to_amount(999999.0, decimals);
+        assert_eq!(
+            Err(SynchronizerError::InsufficientFunds.into()),
+            processor.process_sell_for(&accounts, mul_stocks, sell_fiat_amount, fee, &prices, &oracles)
+        );
     }
 
     #[test]
