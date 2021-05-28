@@ -1,7 +1,4 @@
 //! Program entrypoint
-
-#![cfg(not(feature = "no-entrypoint"))]
-
 use crate::{error::SynchronizerError, processor::Processor};
 use solana_program::{
     account_info::AccountInfo,

@@ -19,6 +19,8 @@ pub enum SynchronizerError {
     BadOracle,
     #[error("Bad mint authority")]
     BadMintAuthority,
+    #[error("Bad mint decimals")]
+    BadDecimals,
     #[error("Invalid Signer")]
     InvalidSigner,
     #[error("Invalid instruction")]

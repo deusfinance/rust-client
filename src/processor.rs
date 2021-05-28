@@ -29,6 +29,9 @@ pub struct Processor {
 
 impl Processor {
 
+// Scale
+pub const DEFAULT_DECIMALS: u8 = 9;
+
 fn process_token_instruction(
     &self,
     instruction: Instruction,
@@ -115,7 +118,20 @@ pub fn process_buy_for(
         return Err(SynchronizerError::NotInitialized.into());
     }
 
-    let fiat_mint= Mint::unpack(&fiat_asset_mint_info.data.borrow_mut()).unwrap();
+    let fiat_mint = Mint::unpack(&fiat_asset_mint_info.data.borrow_mut()).unwrap();
+    let decimals= fiat_mint.decimals;
+    if decimals != Self::DEFAULT_DECIMALS {
+        return Err(SynchronizerError::BadDecimals.into());
+    }
+
+    match fiat_mint.mint_authority {
+        COption::Some(authority) => {
+            if !authority.eq(&self.synchronizer_key) {
+                return Err(SynchronizerError::BadMintAuthority.into());
+            }
+        },
+        COption::None => return Err(SynchronizerError::BadMintAuthority.into()),
+    }
 
     let mut price = prices[0];
     for &p in prices {
@@ -126,26 +142,16 @@ pub fn process_buy_for(
 
     msg!("Process buy_for, user fiat amount: {}, collateral price: {}", amount, price);
 
-    // TODO: there is may be different decimals
-    let collateral_amount_ui=spl_token::amount_to_ui_amount(amount, fiat_mint.decimals) * spl_token::amount_to_ui_amount(price, fiat_mint.decimals);
-    let fee_amount_ui = collateral_amount_ui * spl_token::amount_to_ui_amount(fee, fiat_mint.decimals);
+    let collateral_amount_ui= spl_token::amount_to_ui_amount(amount, decimals) * spl_token::amount_to_ui_amount(price, decimals);
+    let fee_amount_ui = collateral_amount_ui * spl_token::amount_to_ui_amount(fee, decimals);
     msg!("collateral_amount_ui: {}, fee_amount_ui: {}", collateral_amount_ui, fee_amount_ui);
 
-    let collateral_amount = spl_token::ui_amount_to_amount(collateral_amount_ui, fiat_mint.decimals);
-    let fee_amount = spl_token::ui_amount_to_amount(fee_amount_ui, fiat_mint.decimals);
+    let collateral_amount = spl_token::ui_amount_to_amount(collateral_amount_ui, decimals);
+    let fee_amount = spl_token::ui_amount_to_amount(fee_amount_ui, decimals);
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
-    synchronizer.remaining_dollar_cap -= spl_token::ui_amount_to_amount(collateral_amount_ui * multiplier as f64, fiat_mint.decimals);
+    synchronizer.remaining_dollar_cap -= spl_token::ui_amount_to_amount(collateral_amount_ui * multiplier as f64, decimals);
     synchronizer.withdrawable_fee_amount += fee_amount;
-
-    match fiat_mint.mint_authority {
-        COption::Some(authority) => {
-            if !authority.eq(&self.synchronizer_key) {
-                return Err(SynchronizerError::BadMintAuthority.into());
-            }
-        },
-        COption::None => return Err(SynchronizerError::BadMintAuthority.into()),
-    }
 
     // User send collateral token to synchronizer
     let instruction = transfer(
@@ -224,7 +230,10 @@ pub fn process_sell_for(
         return Err(SynchronizerError::NotInitialized.into());
     }
 
-    let fiat_mint= Mint::unpack(&fiat_asset_mint_info.data.borrow_mut()).unwrap();
+    let decimals= Mint::unpack(&fiat_asset_mint_info.data.borrow_mut()).unwrap().decimals;
+    if decimals != Self::DEFAULT_DECIMALS {
+        return Err(SynchronizerError::BadDecimals.into());
+    }
 
     let mut price = prices[0];
     for &p in prices {
@@ -235,16 +244,15 @@ pub fn process_sell_for(
 
     msg!("Process sell_for, user fiat amount: {}, collateral price: {}", amount, price);
 
-    // TODO: there is may be different decimals
-    let collateral_amount_ui=spl_token::amount_to_ui_amount(amount, fiat_mint.decimals) * spl_token::amount_to_ui_amount(price, fiat_mint.decimals);
-    let fee_amount_ui = collateral_amount_ui * spl_token::amount_to_ui_amount(fee, fiat_mint.decimals);
+    let collateral_amount_ui=spl_token::amount_to_ui_amount(amount, decimals) * spl_token::amount_to_ui_amount(price, decimals);
+    let fee_amount_ui = collateral_amount_ui * spl_token::amount_to_ui_amount(fee, decimals);
     msg!("collateral_amount_ui: {}, fee_amount_ui: {}", collateral_amount_ui, fee_amount_ui);
 
-    let collateral_amount = spl_token::ui_amount_to_amount(collateral_amount_ui, fiat_mint.decimals);
-    let fee_amount = spl_token::ui_amount_to_amount(fee_amount_ui, fiat_mint.decimals);
+    let collateral_amount = spl_token::ui_amount_to_amount(collateral_amount_ui, decimals);
+    let fee_amount = spl_token::ui_amount_to_amount(fee_amount_ui, decimals);
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
-    synchronizer.remaining_dollar_cap += spl_token::ui_amount_to_amount(collateral_amount_ui * multiplier as f64, fiat_mint.decimals);
+    synchronizer.remaining_dollar_cap += spl_token::ui_amount_to_amount(collateral_amount_ui * multiplier as f64, decimals);
     synchronizer.withdrawable_fee_amount += fee_amount;
 
     // Burn fiat asset from user
@@ -329,6 +337,7 @@ pub fn process_instruction(
             self.process_initialize_synchronizer_account(accounts, collateral_token_key, remaining_dollar_cap, withdrawable_fee_amount)
         }
 
+        // TODO: make instructions
         SynchronizerInstruction::SetMinimumRequiredSignature => {
             msg!("Instruction: SetMinimumRequiredSignature");
             Ok(())
@@ -364,8 +373,10 @@ impl PrintProgramError for SynchronizerError {
             SynchronizerError::NotInitialized => msg!("Error: Synchronizer account is not initialized"),
             SynchronizerError::NotRentExempt => msg!("Error: Lamport balance below rent-exempt threshold"),
             SynchronizerError::AccessDenied => msg!("Error: Access Denied"),
+
             SynchronizerError::BadOracle => msg!("Error: signer is not an oracle"),
             SynchronizerError::BadMintAuthority => msg!("Error: Bad mint authority"),
+            SynchronizerError::BadDecimals => msg!("Error: Bad mint decimals"),
 
             SynchronizerError::InvalidSigner => msg!("Error: Invalid transaction Signer"),
             SynchronizerError::InvalidInstruction => msg!("Error: Invalid instruction"),
@@ -521,7 +532,7 @@ mod test {
 
         // Infrastructure preparing
         // Create and init collateral token
-        let decimals = 6;
+        let decimals = Processor::DEFAULT_DECIMALS;
         let mut collateral_asset_mint = SolanaAccount::new(mint_minimum_balance(), Mint::get_packed_len(), &spl_token::id());
         do_token_program(
             initialize_mint(&spl_token::id(), &collateral_key, &synchronizer_key, None, decimals).unwrap(),
@@ -643,7 +654,14 @@ mod test {
             Account::unpack_unchecked(&user_fiat_account_info.data.borrow()).unwrap().owner
         );
 
-        let synch_collateral_balance_before = Account::unpack_unchecked(&synchronizer_collateral_account_info.data.borrow()).unwrap().amount;
+        let synchronizer = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
+        let dollar_cap_before = synchronizer.remaining_dollar_cap;
+        let withdrawable_fee_before = synchronizer.withdrawable_fee_amount;
+
+        assert_eq!(dollar_cap_before, 0);
+        assert_eq!(withdrawable_fee_before, 0);
+
+        let sync_collateral_balance_before = Account::unpack_unchecked(&synchronizer_collateral_account_info.data.borrow()).unwrap().amount;
         let user_collateral_balance_before = Account::unpack_unchecked(&user_collateral_account_info.data.borrow()).unwrap().amount;
         let user_fiat_balance_before = Account::unpack_unchecked(&user_fiat_account_info.data.borrow()).unwrap().amount;
         let accounts = vec![
@@ -662,17 +680,20 @@ mod test {
             user_fiat_balance_before - sell_fiat_amount
         );
 
-        let collateral_amount_ui = spl_token::amount_to_ui_amount(sell_fiat_amount, decimals) * spl_token::amount_to_ui_amount(sell_price, decimals);
-        let collateral_fee_ui = collateral_amount_ui * spl_token::amount_to_ui_amount(fee, decimals);
-        let collateral_balance_diff = spl_token::ui_amount_to_amount(collateral_amount_ui - collateral_fee_ui, decimals);
+        let collateral_amount: u64 = 40_000_000_000; // amount * price
+        let collateral_fee: u64 = 40_000_000; // collateral_amount * fee
         assert_eq!(
             Account::unpack_unchecked(&synchronizer_collateral_account_info.data.borrow()).unwrap().amount,
-            synch_collateral_balance_before - collateral_balance_diff
+            sync_collateral_balance_before - (collateral_amount - collateral_fee)
         );
         assert_eq!(
             Account::unpack_unchecked(&user_collateral_account_info.data.borrow()).unwrap().amount,
-            user_collateral_balance_before + collateral_balance_diff
+            user_collateral_balance_before + (collateral_amount - collateral_fee)
         );
+
+        let synchronizer = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
+        assert_eq!(synchronizer.remaining_dollar_cap, dollar_cap_before + collateral_amount * mul_stocks);
+        assert_eq!(synchronizer.withdrawable_fee_amount, withdrawable_fee_before +  collateral_fee);
 
         // Test buy_for instruction
         let buy_fiat_amount = spl_token::ui_amount_to_amount(50.0, decimals);
@@ -694,7 +715,11 @@ mod test {
         );
 
         // Good case
-        let synch_collateral_balance_before = Account::unpack_unchecked(&synchronizer_collateral_account_info.data.borrow()).unwrap().amount;
+        let synchronizer = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
+        let dollar_cap_before = synchronizer.remaining_dollar_cap;
+        let withdrawable_fee_before = synchronizer.withdrawable_fee_amount;
+
+        let sync_collateral_balance_before = Account::unpack_unchecked(&synchronizer_collateral_account_info.data.borrow()).unwrap().amount;
         let user_collateral_balance_before = Account::unpack_unchecked(&user_collateral_account_info.data.borrow()).unwrap().amount;
         let user_fiat_balance_before = Account::unpack_unchecked(&user_fiat_account_info.data.borrow()).unwrap().amount;
         let accounts = vec![
@@ -713,17 +738,20 @@ mod test {
             user_fiat_balance_before + buy_fiat_amount
         );
 
-        let collateral_amount_ui = spl_token::amount_to_ui_amount(buy_fiat_amount, decimals) * spl_token::amount_to_ui_amount(buy_price, decimals);
-        let collateral_fee_ui = collateral_amount_ui * spl_token::amount_to_ui_amount(fee, decimals);
-        let collateral_balance_diff = spl_token::ui_amount_to_amount(collateral_amount_ui + collateral_fee_ui, decimals);
+        let collateral_amount: u64 = 25_000_000_000; // amount * price
+        let collateral_fee: u64 = 25_000_000; // collateral_amount * fee
         assert_eq!(
             Account::unpack_unchecked(&synchronizer_collateral_account_info.data.borrow()).unwrap().amount,
-            synch_collateral_balance_before + collateral_balance_diff
+            sync_collateral_balance_before + (collateral_amount + collateral_fee)
         );
         assert_eq!(
             Account::unpack_unchecked(&user_collateral_account_info.data.borrow()).unwrap().amount,
-            user_collateral_balance_before - collateral_balance_diff
+            user_collateral_balance_before - (collateral_amount + collateral_fee)
         );
+
+        let synchronizer = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
+        assert_eq!(synchronizer.remaining_dollar_cap, dollar_cap_before - (collateral_amount * mul_stocks));
+        assert_eq!(synchronizer.withdrawable_fee_amount, withdrawable_fee_before + collateral_fee);
     }
 
     #[test]
