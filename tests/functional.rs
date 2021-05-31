@@ -1,6 +1,5 @@
-// use borsh::de::BorshDeserialize;
-// use byteorder::{BigEndian, WriteBytesExt};
-// use synchronizer::processor::{process_instruction};
+
+// use synchronizer::processor::Processor;
 // use solana_program_test::*;
 // use solana_sdk::{
 //     account::Account,
@@ -10,19 +9,18 @@
 //     transaction::Transaction,
 // };
 
-// use std::convert::TryInto;
 // use std::mem;
 
 // // Functional tests
 // #[tokio::test]
-// async fn test_smartcontract_template() {
-//     let program_id = Pubkey::new_unique();
-//     let app_pubkey = Pubkey::new_unique();
+// async fn test_synchronizer() {
+//     let synchronizer_key = Pubkey::new_unique(); // Payer??
 
+//     let program_id = Pubkey::new_unique(); // TODO: not new
 //     let mut program_test = ProgramTest::new(
-//         "template_contract", // Run the BPF version with `cargo test-bpf`
+//         "synchronizer",
 //         program_id,
-//         processor!(process_instruction), // Run the native version with `cargo test`
+//         processor!(processor.process_instruction), // Run the native version with `cargo test`
 //     );
 
 //     program_test.add_account(

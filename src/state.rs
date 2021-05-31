@@ -27,7 +27,7 @@ impl Pack for SynchronizerData {
             collateral_token_key,
             remaining_dollar_cap,
             withdrawable_fee_amount,
-            minminimum_required_signature
+            minminimum_required_signature,
         ) = array_refs![src, 1, 32, 8, 8, 8];
 
         let is_initialized = match is_initialized {
