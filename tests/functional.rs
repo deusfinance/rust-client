@@ -1,36 +1,26 @@
 
-// use synchronizer::processor::Processor;
-// use solana_program_test::*;
-// use solana_sdk::{
-//     account::Account,
-//     instruction::{AccountMeta, Instruction},
-//     pubkey::Pubkey,
-//     signature::Signer,
-//     transaction::Transaction,
-// };
+use solana_program::{program_pack::Pack, rent::Rent};
+use synchronizer::{processor::Processor, processor::id, state::SynchronizerData};
+use solana_program_test::*;
+use solana_sdk::{
+    pubkey::Pubkey,
+};
 
-// use std::mem;
+fn init_acc_minimum_balance() -> u64 {
+    Rent::default().minimum_balance(SynchronizerData::get_packed_len())
+}
 
-// // Functional tests
-// #[tokio::test]
-// async fn test_synchronizer() {
-//     let synchronizer_key = Pubkey::new_unique(); // Payer??
+// Functional tests
+#[tokio::test]
+async fn test_synchronizer() {
+    let program_test = ProgramTest::new(
+        "synchronizer",
+        id(),
+        processor!(Processor::process_instruction),
+    );
 
-//     let program_id = Pubkey::new_unique(); // TODO: not new
-//     let mut program_test = ProgramTest::new(
-//         "synchronizer",
-//         program_id,
-//         processor!(processor.process_instruction), // Run the native version with `cargo test`
-//     );
+    let (mut banks_client, payer, recent_blockhash) = program_test.start().await;
 
-//     program_test.add_account(
-//         app_pubkey,
-//         Account {
-//             lamports: 5,
-//             data: vec![0_u8; mem::size_of::<f32>()],
-//             owner: program_id,
-//             ..Account::default()
-//         },
-//     );
-//     let (mut banks_client, payer, recent_blockhash) = program_test.start().await;
-// }
+    // TODO: spl_token infrastructure transactions
+    // TODO: sunchronizer transactions tests (all create_accounts by transactions)
+}
