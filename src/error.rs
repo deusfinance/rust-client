@@ -17,10 +17,14 @@ pub enum SynchronizerError {
     InsufficientFunds,
     #[error("Access denied")]
     AccessDenied,
+    #[error("Not enough oracles")]
+    NotEnoughOracles,
     #[error("Signer is not an oracle")]
     BadOracle,
     #[error("Bad mint authority")]
     BadMintAuthority,
+    #[error("Bad collateral mint")]
+    BadCollateralMint,
     #[error("Bad mint decimals")]
     BadDecimals,
     #[error("Invalid Signer")]

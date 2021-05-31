@@ -6,7 +6,7 @@ use crate::{
 use num_traits::FromPrimitive;
 use solana_program::{account_info::{next_account_info, AccountInfo}, decode_error::DecodeError, entrypoint::ProgramResult, instruction::Instruction, msg, program_error::{PrintProgramError, ProgramError}, program_option::COption, program_pack::Pack, pubkey::Pubkey, rent::Rent, sysvar::Sysvar};
 use spl_token::{instruction::{mint_to, burn, transfer}, processor::Processor as SPLTokenProcessor, state::{Account, Mint}};
-use std::collections::HashSet;
+use std::{collections::HashSet};
 
 // Synchronizer program_id
 solana_program::declare_id!("8nNo8sjfYvwouTPQXw5fJ2D6DWzcWsbeXQanDGELt4AG");
@@ -40,46 +40,6 @@ fn process_token_instruction(
     SPLTokenProcessor::process(&spl_token::id(), &instruction_account_infos, &instruction.data)
 }
 
-pub fn process_initialize_synchronizer_account(
-    &self,
-    accounts: &[AccountInfo],
-    collateral_token_key: Pubkey,
-    remaining_dollar_cap: u64,
-    withdrawable_fee_amount: u64,
-) -> ProgramResult {
-    let account_info_iter = &mut accounts.iter();
-    let synchronizer_account_info = next_account_info(account_info_iter)?;
-    let rent_account_info =next_account_info(account_info_iter)?;
-
-    if !synchronizer_account_info.owner.eq(&id()) {
-        return Err(SynchronizerError::AccessDenied.into());
-    }
-
-    if !synchronizer_account_info.key.eq(&self.synchronizer_key)  {
-        return Err(SynchronizerError::AccessDenied.into());
-    }
-
-    let rent = &Rent::from_account_info(rent_account_info)?;
-    let account_data_len = synchronizer_account_info.data_len();
-    let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
-    if synchronizer.is_initialized {
-        return Err(SynchronizerError::AlreadyInitialized.into());
-    }
-
-    if !rent.is_exempt(synchronizer_account_info.lamports(), account_data_len) {
-        return Err(SynchronizerError::NotRentExempt.into());
-    }
-
-    synchronizer.is_initialized = true;
-    synchronizer.remaining_dollar_cap = remaining_dollar_cap;
-    synchronizer.collateral_token_key = collateral_token_key;
-    synchronizer.withdrawable_fee_amount = withdrawable_fee_amount;
-
-    SynchronizerData::pack(synchronizer, &mut synchronizer_account_info.data.borrow_mut())?;
-
-    Ok(())
-}
-
 pub fn process_buy_for(
     &self,
     accounts: &[AccountInfo],
@@ -107,15 +67,36 @@ pub fn process_buy_for(
         return Err(SynchronizerError::InvalidSigner.into());
     }
 
-    for oracle in oracles {
-        if !self.oracles_keys.contains(oracle) {
-            return Err(SynchronizerError::BadOracle.into());
-        }
-    }
-
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_authority_info.data.borrow())?;
     if !synchronizer.is_initialized {
         return Err(SynchronizerError::NotInitialized.into());
+    }
+
+    if oracles.len() < synchronizer.minimum_required_signature as usize {
+        return Err(SynchronizerError::NotEnoughOracles.into());
+    }
+    if prices.len() < synchronizer.minimum_required_signature as usize {
+        return Err(SynchronizerError::NotEnoughOracles.into());
+    }
+
+    let mut price = prices[0];
+    for i in 0..synchronizer.minimum_required_signature as usize {
+        if !self.oracles_keys.contains(&oracles[i]) {
+            return Err(SynchronizerError::BadOracle.into());
+        }
+
+        if prices[i] > price {
+            price = prices[i];
+        }
+    }
+
+    let synchronizer_collateral_account = Account::unpack(&synchronizer_collateral_account_info.data.borrow()).unwrap();
+    let user_collateral_account = Account::unpack(&user_collateral_account_info.data.borrow()).unwrap();
+    if !synchronizer_collateral_account.mint.eq(&synchronizer.collateral_token_key) {
+        return Err(SynchronizerError::BadCollateralMint.into());
+    }
+    if !user_collateral_account.mint.eq(&synchronizer.collateral_token_key) {
+        return Err(SynchronizerError::BadCollateralMint.into());
     }
 
     let fiat_mint = Mint::unpack(&fiat_asset_mint_info.data.borrow_mut()).unwrap();
@@ -133,13 +114,6 @@ pub fn process_buy_for(
         COption::None => return Err(SynchronizerError::BadMintAuthority.into()),
     }
 
-    let mut price = prices[0];
-    for &p in prices {
-        if p > price {
-            price = p;
-        }
-    }
-
     msg!("Process buy_for, user fiat amount: {}, collateral price: {}", amount, price);
 
     let collateral_amount_ui= spl_token::amount_to_ui_amount(amount, decimals) * spl_token::amount_to_ui_amount(price, decimals);
@@ -150,7 +124,7 @@ pub fn process_buy_for(
     let fee_amount = spl_token::ui_amount_to_amount(fee_amount_ui, decimals);
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
-    if Account::unpack(&user_collateral_account_info.data.borrow()).unwrap().amount < (collateral_amount + fee_amount) {
+    if user_collateral_account.amount < (collateral_amount + fee_amount) {
         return Err(SynchronizerError::InsufficientFunds.into());
     }
 
@@ -222,27 +196,41 @@ pub fn process_sell_for(
         return Err(SynchronizerError::InvalidSigner.into());
     }
 
-    for oracle in oracles {
-        if !self.oracles_keys.contains(oracle) {
-            return Err(SynchronizerError::BadOracle.into());
-        }
-    }
-
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_authority_info.data.borrow())?;
     if !synchronizer.is_initialized {
         return Err(SynchronizerError::NotInitialized.into());
     }
 
-    let decimals= Mint::unpack(&fiat_asset_mint_info.data.borrow_mut()).unwrap().decimals;
-    if decimals != Self::DEFAULT_DECIMALS {
-        return Err(SynchronizerError::BadDecimals.into());
+    if oracles.len() < synchronizer.minimum_required_signature as usize {
+        return Err(SynchronizerError::NotEnoughOracles.into());
+    }
+    if prices.len() < synchronizer.minimum_required_signature as usize {
+        return Err(SynchronizerError::NotEnoughOracles.into());
     }
 
     let mut price = prices[0];
-    for &p in prices {
-        if p < price {
-            price = p;
+    for i in 0..synchronizer.minimum_required_signature as usize {
+        if !self.oracles_keys.contains(&oracles[i]) {
+            return Err(SynchronizerError::BadOracle.into());
         }
+
+        if prices[i] < price {
+            price = prices[i];
+        }
+    }
+
+    let synchronizer_collateral_account = Account::unpack(&synchronizer_collateral_account_info.data.borrow()).unwrap();
+    let user_collateral_account = Account::unpack(&user_collateral_account_info.data.borrow()).unwrap();
+    if !synchronizer_collateral_account.mint.eq(&synchronizer.collateral_token_key) {
+        return Err(SynchronizerError::BadCollateralMint.into());
+    }
+    if !user_collateral_account.mint.eq(&synchronizer.collateral_token_key) {
+        return Err(SynchronizerError::BadCollateralMint.into());
+    }
+
+    let decimals= Mint::unpack(&fiat_asset_mint_info.data.borrow_mut()).unwrap().decimals;
+    if decimals != Self::DEFAULT_DECIMALS {
+        return Err(SynchronizerError::BadDecimals.into());
     }
 
     msg!("Process sell_for, user fiat amount: {}, collateral price: {}", amount, price);
@@ -255,7 +243,7 @@ pub fn process_sell_for(
     let fee_amount = spl_token::ui_amount_to_amount(fee_amount_ui, decimals);
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
-    if Account::unpack(&synchronizer_collateral_account_info.data.borrow()).unwrap().amount < (collateral_amount - fee_amount) {
+    if synchronizer_collateral_account.amount < (collateral_amount - fee_amount) {
         return Err(SynchronizerError::InsufficientFunds.into());
     }
 
@@ -300,6 +288,129 @@ pub fn process_sell_for(
     Ok(())
 }
 
+pub fn process_initialize_synchronizer_account(
+    &self,
+    accounts: &[AccountInfo],
+    collateral_token_key: Pubkey,
+    remaining_dollar_cap: u64,
+    withdrawable_fee_amount: u64,
+    minimum_required_signature: u64
+) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let synchronizer_account_info = next_account_info(account_info_iter)?;
+    let rent_account_info =next_account_info(account_info_iter)?;
+
+    if !synchronizer_account_info.owner.eq(&id()) {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    if !synchronizer_account_info.key.eq(&self.synchronizer_key)  {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    let rent = &Rent::from_account_info(rent_account_info)?;
+    let account_data_len = synchronizer_account_info.data_len();
+    let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
+    if synchronizer.is_initialized {
+        return Err(SynchronizerError::AlreadyInitialized.into());
+    }
+
+    if !rent.is_exempt(synchronizer_account_info.lamports(), account_data_len) {
+        return Err(SynchronizerError::NotRentExempt.into());
+    }
+
+    synchronizer.is_initialized = true;
+    synchronizer.remaining_dollar_cap = remaining_dollar_cap;
+    synchronizer.collateral_token_key = collateral_token_key;
+    synchronizer.withdrawable_fee_amount = withdrawable_fee_amount;
+    synchronizer.minimum_required_signature = minimum_required_signature;
+
+    SynchronizerData::pack(synchronizer, &mut synchronizer_account_info.data.borrow_mut())?;
+
+    Ok(())
+}
+
+pub fn process_set_minimum_required_signature(
+    &self,
+    accounts: &[AccountInfo],
+    minimum_required_signature: u64,
+) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let synchronizer_account_info = next_account_info(account_info_iter)?;
+
+    if !synchronizer_account_info.owner.eq(&id()) {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    if !synchronizer_account_info.key.eq(&self.synchronizer_key)  {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
+    if !synchronizer.is_initialized {
+        return Err(SynchronizerError::NotInitialized.into());
+    }
+
+    synchronizer.minimum_required_signature = minimum_required_signature;
+    SynchronizerData::pack(synchronizer, &mut synchronizer_account_info.data.borrow_mut())?;
+
+    Ok(())
+}
+
+pub fn process_set_collateral_token(
+    &self,
+    accounts: &[AccountInfo],
+    collateral_token_key: Pubkey,
+) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let synchronizer_account_info = next_account_info(account_info_iter)?;
+
+    if !synchronizer_account_info.owner.eq(&id()) {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    if !synchronizer_account_info.key.eq(&self.synchronizer_key)  {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
+    if !synchronizer.is_initialized {
+        return Err(SynchronizerError::NotInitialized.into());
+    }
+
+    synchronizer.collateral_token_key = collateral_token_key;
+    SynchronizerData::pack(synchronizer, &mut synchronizer_account_info.data.borrow_mut())?;
+
+    Ok(())
+}
+
+pub fn process_set_remaining_dollar_cap(
+    &self,
+    accounts: &[AccountInfo],
+    remaining_dollar_cap: u64,
+) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let synchronizer_account_info = next_account_info(account_info_iter)?;
+
+    if !synchronizer_account_info.owner.eq(&id()) {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    if !synchronizer_account_info.key.eq(&self.synchronizer_key)  {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
+    if !synchronizer.is_initialized {
+        return Err(SynchronizerError::NotInitialized.into());
+    }
+
+    synchronizer.remaining_dollar_cap = remaining_dollar_cap;
+    SynchronizerData::pack(synchronizer, &mut synchronizer_account_info.data.borrow_mut())?;
+
+    Ok(())
+}
+
 pub fn process_instruction(
     &self,
     program_id: &Pubkey,
@@ -337,25 +448,35 @@ pub fn process_instruction(
         SynchronizerInstruction::InitializeSynchronizerAccount {
             collateral_token_key,
             remaining_dollar_cap,
-            withdrawable_fee_amount
+            withdrawable_fee_amount,
+            minimum_required_signature
         } => {
             msg!("Instruction: InitializeSynchronizerAccount");
-            self.process_initialize_synchronizer_account(accounts, collateral_token_key, remaining_dollar_cap, withdrawable_fee_amount)
+            self.process_initialize_synchronizer_account(accounts, collateral_token_key, remaining_dollar_cap, withdrawable_fee_amount, minimum_required_signature)
+        }
+
+        SynchronizerInstruction::SetMinimumRequiredSignature {
+            minimum_required_signature
+        } => {
+            msg!("Instruction: SetMinimumRequiredSignature");
+            self.process_set_minimum_required_signature(accounts, minimum_required_signature)
+        }
+
+        SynchronizerInstruction::SetCollateralToken {
+            collateral_token_key
+        } => {
+            msg!("Instruction: SetCollateralToken");
+            self.process_set_collateral_token(accounts, collateral_token_key)
+        }
+
+        SynchronizerInstruction::SetRemainingDollarCap {
+            remaining_dollar_cap
+        } => {
+            msg!("Instruction: SetRemainingDollarCap");
+            self.process_set_remaining_dollar_cap(accounts, remaining_dollar_cap)
         }
 
         // TODO: make instructions
-        SynchronizerInstruction::SetMinimumRequiredSignature => {
-            msg!("Instruction: SetMinimumRequiredSignature");
-            Ok(())
-        }
-        SynchronizerInstruction::SetCollateralToken => {
-            msg!("Instruction: SetCollateralToken");
-            Ok(())
-        }
-        SynchronizerInstruction::SetRemainingDollarCap => {
-            msg!("Instruction: SetRemainingDollarCap");
-            Ok(())
-        }
         SynchronizerInstruction::WithdrawFee => {
             msg!("Instruction: WithdrawFee");
             Ok(())
@@ -381,8 +502,10 @@ impl PrintProgramError for SynchronizerError {
             SynchronizerError::InsufficientFunds => msg!("Error: Insufficient funds"),
             SynchronizerError::AccessDenied => msg!("Error: Access Denied"),
 
+            SynchronizerError::NotEnoughOracles => msg!("Error: Not enough oracles"),
             SynchronizerError::BadOracle => msg!("Error: signer is not an oracle"),
             SynchronizerError::BadMintAuthority => msg!("Error: Bad mint authority"),
+            SynchronizerError::BadCollateralMint => msg!("Error: Bad collateral mint"),
             SynchronizerError::BadDecimals => msg!("Error: Bad mint decimals"),
 
             SynchronizerError::InvalidSigner => msg!("Error: Invalid transaction Signer"),
@@ -459,7 +582,7 @@ mod test {
             ];
             assert_eq!(
                 Err(SynchronizerError::NotRentExempt.into()),
-                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0)
+                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0, 2)
             );
         }
 
@@ -472,7 +595,7 @@ mod test {
             ];
             assert_eq!(
                 Err(SynchronizerError::AccessDenied.into()), // cause of bad owner
-                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0)
+                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0, 2)
             );
         }
 
@@ -485,7 +608,7 @@ mod test {
             ];
             assert_eq!(
                 Err(SynchronizerError::AccessDenied.into()), // cause of bad pubkey
-                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0)
+                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0, 2)
             );
         }
 
@@ -498,7 +621,7 @@ mod test {
             ];
             assert_eq!(
                 Err(SynchronizerError::AccessDenied.into()),
-                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0)
+                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0, 2)
             );
         }
 
@@ -507,7 +630,7 @@ mod test {
                 (&synchronizer_key, true, &mut synchronizer_account).into_account_info(),
                 (&rent_sysvar_key, false, &mut rent_sysvar_account).into_account_info(),
             ];
-            processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0).unwrap()
+            processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0, 2).unwrap()
         }
 
         {
@@ -517,7 +640,7 @@ mod test {
             ];
             assert_eq!(
                 Err(SynchronizerError::AlreadyInitialized.into()),
-                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0)
+                processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0, 2)
             );
         }
     }
@@ -622,7 +745,7 @@ mod test {
             synchronizer_account_info.clone(),
             rent_sysvar_info.clone(),
         ];
-        processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0).unwrap();
+        processor.process_initialize_synchronizer_account(&accounts, collateral_key, 0, 0, oracles.len() as u64).unwrap();
 
         // Parameters for sell/buy instructions
         let mul_stocks = 2;
@@ -768,6 +891,68 @@ mod test {
             Err(SynchronizerError::InsufficientFunds.into()),
             processor.process_sell_for(&accounts, mul_stocks, sell_fiat_amount, fee, &prices, &oracles)
         );
+    }
+
+    #[test]
+    fn test_admin_setters() {
+        let program_id = id();
+        let synchronizer_key = Pubkey::new_unique();
+        let mut synchronizer_account = SolanaAccount::new(init_acc_minimum_balance(), SynchronizerData::get_packed_len(), &program_id);
+        let rent_sysvar_key = sysvar::rent::id();
+        let mut rent_sysvar_account = create_account_for_test(&Rent::default());
+        let start_collateral_token_key = Pubkey::new_unique();
+        let oracles = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+
+        let processor = Processor {
+            synchronizer_key: synchronizer_key,
+            oracles_keys: oracles.iter().cloned().collect()
+        };
+
+        let synchronizer_account_info = (&synchronizer_key, true, &mut synchronizer_account).into_account_info();
+        let rent_info = (&rent_sysvar_key, false, &mut rent_sysvar_account).into_account_info();
+
+        let start_remaining_dollar_cap: u64 = 10;
+        let start_minimum_required_signature: u64 = oracles.len() as u64;
+
+        let mut fake_acc = SolanaAccount::default();
+        let bad_accounts = vec![
+            (&synchronizer_key, true, &mut fake_acc).into_account_info(),
+            rent_info.clone(),
+        ];
+        assert_eq!(Err(SynchronizerError::AccessDenied.into()), processor.process_set_minimum_required_signature(&bad_accounts, 123456));
+        assert_eq!(Err(SynchronizerError::AccessDenied.into()), processor.process_set_remaining_dollar_cap(&bad_accounts, 123456));
+        assert_eq!(Err(SynchronizerError::AccessDenied.into()), processor.process_set_collateral_token(&bad_accounts, Pubkey::new_unique()));
+
+        let accounts = vec![
+            synchronizer_account_info.clone(),
+            rent_info.clone(),
+        ];
+
+        assert_eq!(Err(SynchronizerError::NotInitialized.into()), processor.process_set_minimum_required_signature(&accounts, 123456));
+        assert_eq!(Err(SynchronizerError::NotInitialized.into()), processor.process_set_remaining_dollar_cap(&accounts, 123456));
+        assert_eq!(Err(SynchronizerError::NotInitialized.into()), processor.process_set_collateral_token(&accounts, Pubkey::new_unique()));
+
+        processor.process_initialize_synchronizer_account(&accounts, start_collateral_token_key, start_remaining_dollar_cap, 0, start_minimum_required_signature).unwrap();
+
+        let sync_data = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
+        assert_eq!(sync_data.minimum_required_signature, start_minimum_required_signature);
+        assert_eq!(sync_data.remaining_dollar_cap, start_remaining_dollar_cap);
+        assert_eq!(sync_data.collateral_token_key, start_collateral_token_key);
+
+        let minimum_required_signature = 3;
+        processor.process_set_minimum_required_signature(&accounts, minimum_required_signature).unwrap();
+        let sync_data = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
+        assert_eq!(sync_data.minimum_required_signature, minimum_required_signature);
+
+        let remaining_dollar_cap: u64 = 123456;
+        processor.process_set_remaining_dollar_cap(&accounts, remaining_dollar_cap).unwrap();
+        let sync_data = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
+        assert_eq!(sync_data.remaining_dollar_cap, remaining_dollar_cap);
+
+        let collateral_token_key = Pubkey::new_unique();
+        processor.process_set_collateral_token(&accounts, collateral_token_key).unwrap();
+        let sync_data = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
+        assert_eq!(sync_data.collateral_token_key, collateral_token_key);
     }
 
     #[test]

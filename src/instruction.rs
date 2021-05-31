@@ -44,17 +44,35 @@ pub enum SynchronizerInstruction {
     // Admin Instructions
     // Initialization of Synchronizer account
     // Accounts expected by this instruction:
-    // 0. [writable] The Synchronizer account authority
+    // 0. [writable, signer] The Synchronizer account authority
     // 1. [] Rent sysvar
     InitializeSynchronizerAccount {
         collateral_token_key: Pubkey,
         remaining_dollar_cap: u64,
         withdrawable_fee_amount: u64,
+        minimum_required_signature: u64,
     },
 
-    SetMinimumRequiredSignature,
-    SetCollateralToken,
-    SetRemainingDollarCap,
+    // Set minimum required signature
+    // Accounts expected by this instruction:
+    // 0. [signer] The Synchronizer account authority
+    SetMinimumRequiredSignature {
+        minimum_required_signature: u64
+    },
+
+    // Set collateral token key
+    // Accounts expected by this instruction:
+    // 0. [signer] The Synchronizer account authority
+    SetCollateralToken {
+        collateral_token_key: Pubkey
+    },
+
+    // Set remaining dollar cap
+    // Accounts expected by this instruction:
+    // 0. [signer] The Synchronizer account authority
+    SetRemainingDollarCap {
+        remaining_dollar_cap: u64
+    },
 
     WithdrawFee,
     WithdrawCollateral
@@ -132,8 +150,15 @@ impl SynchronizerInstruction {
                     .ok()
                     .map(u64::from_le_bytes)
                     .ok_or(InvalidInstruction)?;
-                let (withdrawable_fee_amount, _rest) = rest.split_at(8);
+                let (withdrawable_fee_amount, rest) = rest.split_at(8);
                 let withdrawable_fee_amount = withdrawable_fee_amount
+                    .try_into()
+                    .ok()
+                    .map(u64::from_le_bytes)
+                    .ok_or(InvalidInstruction)?;
+
+                let (minimum_required_signature, _rest) = rest.split_at(8);
+                let minimum_required_signature = minimum_required_signature
                     .try_into()
                     .ok()
                     .map(u64::from_le_bytes)
@@ -142,13 +167,45 @@ impl SynchronizerInstruction {
                 Self::InitializeSynchronizerAccount {
                     collateral_token_key,
                     remaining_dollar_cap,
-                    withdrawable_fee_amount
+                    withdrawable_fee_amount,
+                    minimum_required_signature
                 }
             }
 
-            3 => { Self::SetMinimumRequiredSignature }
-            4 => { Self::SetCollateralToken }
-            5 => { Self:: SetRemainingDollarCap }
+            3 => {
+                let (minimum_required_signature, _rest) = rest.split_at(8);
+                let minimum_required_signature = minimum_required_signature
+                    .try_into()
+                    .ok()
+                    .map(u64::from_le_bytes)
+                    .ok_or(InvalidInstruction)?;
+
+                Self::SetMinimumRequiredSignature {
+                    minimum_required_signature
+                }
+            }
+
+            4 => {
+                let (collateral_token_key, _rest) = Self::unpack_pubkey(rest).unwrap();
+
+                Self::SetCollateralToken {
+                    collateral_token_key
+                }
+            }
+
+            5 => {
+                let (remaining_dollar_cap, _rest) = rest.split_at(8);
+                let remaining_dollar_cap = remaining_dollar_cap
+                    .try_into()
+                    .ok()
+                    .map(u64::from_le_bytes)
+                    .ok_or(InvalidInstruction)?;
+
+                Self:: SetRemainingDollarCap {
+                    remaining_dollar_cap
+                }
+            }
+
             6 => { Self::WithdrawFee }
             7 => { Self::WithdrawCollateral }
 
@@ -208,15 +265,36 @@ impl SynchronizerInstruction {
                 collateral_token_key,
                 remaining_dollar_cap,
                 withdrawable_fee_amount,
+                minimum_required_signature,
             } => {
                 buf.push(2);
                 buf.extend_from_slice(collateral_token_key.as_ref());
                 buf.extend_from_slice(&remaining_dollar_cap.to_le_bytes());
                 buf.extend_from_slice(&withdrawable_fee_amount.to_le_bytes());
+                buf.extend_from_slice(&minimum_required_signature.to_le_bytes());
             }
-            Self::SetMinimumRequiredSignature => buf.push(3),
-            Self::SetCollateralToken => buf.push(4),
-            Self::SetRemainingDollarCap => buf.push(5),
+
+            Self::SetMinimumRequiredSignature {
+                minimum_required_signature
+            } => {
+                buf.push(3);
+                buf.extend_from_slice(&minimum_required_signature.to_le_bytes());
+            },
+
+            Self::SetCollateralToken {
+                collateral_token_key
+            } => {
+                buf.push(4);
+                buf.extend_from_slice(&collateral_token_key.as_ref());
+            },
+
+            Self::SetRemainingDollarCap {
+                remaining_dollar_cap
+            } => {
+                buf.push(5);
+                buf.extend_from_slice(&remaining_dollar_cap.to_le_bytes());
+            },
+
             Self::WithdrawFee => buf.push(6),
             Self::WithdrawCollateral => buf.push(7),
         };
