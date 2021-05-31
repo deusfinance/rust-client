@@ -74,8 +74,23 @@ pub enum SynchronizerInstruction {
         remaining_dollar_cap: u64
     },
 
-    WithdrawFee,
-    WithdrawCollateral
+    // Withdraw fee from Synchronizer account to recipient account
+    // Accounts expected by this instruction:
+    // 0. [writable] The Synchronizer collateral token associated account (source)
+    // 1. [writable] recipient collateral token associated account (detination)
+    // 2. [signer] The Synchronizer account authority
+    WithdrawFee {
+        amount: u64
+    },
+
+    // Withdraw collateral from Synchronizer account to recipient account
+    // Accounts expected by this instruction:
+    // 0. [writable] The Synchronizer collateral token associated account (source)
+    // 1. [writable] recipient collateral token associated account (detination)
+    // 2. [signer] The Synchronizer account authority
+    WithdrawCollateral {
+        amount: u64
+    },
 }
 
 impl SynchronizerInstruction {
@@ -206,8 +221,31 @@ impl SynchronizerInstruction {
                 }
             }
 
-            6 => { Self::WithdrawFee }
-            7 => { Self::WithdrawCollateral }
+            6 => {
+                let (amount, _rest) = rest.split_at(8);
+                let amount = amount
+                    .try_into()
+                    .ok()
+                    .map(u64::from_le_bytes)
+                    .ok_or(InvalidInstruction)?;
+
+                Self::WithdrawFee {
+                    amount
+                }
+            }
+
+            7 => {
+                let (amount, _rest) = rest.split_at(8);
+                let amount = amount
+                    .try_into()
+                    .ok()
+                    .map(u64::from_le_bytes)
+                    .ok_or(InvalidInstruction)?;
+
+                Self::WithdrawCollateral {
+                    amount
+                }
+            }
 
             _ => return Err(SynchronizerError::InvalidInstruction.into()),
         })
@@ -295,8 +333,19 @@ impl SynchronizerInstruction {
                 buf.extend_from_slice(&remaining_dollar_cap.to_le_bytes());
             },
 
-            Self::WithdrawFee => buf.push(6),
-            Self::WithdrawCollateral => buf.push(7),
+            Self::WithdrawFee {
+                amount
+            } => {
+                buf.push(6);
+                buf.extend_from_slice(&amount.to_le_bytes());
+            },
+
+            Self::WithdrawCollateral {
+                amount
+            } => {
+                buf.push(7);
+                buf.extend_from_slice(&amount.to_le_bytes());
+            },
         };
         buf
     }

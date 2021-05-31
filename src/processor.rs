@@ -308,6 +308,10 @@ pub fn process_initialize_synchronizer_account(
         return Err(SynchronizerError::AccessDenied.into());
     }
 
+    if !synchronizer_account_info.is_signer {
+        return Err(SynchronizerError::InvalidSigner.into());
+    }
+
     let rent = &Rent::from_account_info(rent_account_info)?;
     let account_data_len = synchronizer_account_info.data_len();
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
@@ -346,6 +350,10 @@ pub fn process_set_minimum_required_signature(
         return Err(SynchronizerError::AccessDenied.into());
     }
 
+    if !synchronizer_account_info.is_signer {
+        return Err(SynchronizerError::InvalidSigner.into());
+    }
+
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
     if !synchronizer.is_initialized {
         return Err(SynchronizerError::NotInitialized.into());
@@ -371,6 +379,10 @@ pub fn process_set_collateral_token(
 
     if !synchronizer_account_info.key.eq(&self.synchronizer_key)  {
         return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    if !synchronizer_account_info.is_signer {
+        return Err(SynchronizerError::InvalidSigner.into());
     }
 
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
@@ -400,6 +412,10 @@ pub fn process_set_remaining_dollar_cap(
         return Err(SynchronizerError::AccessDenied.into());
     }
 
+    if !synchronizer_account_info.is_signer {
+        return Err(SynchronizerError::InvalidSigner.into());
+    }
+
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
     if !synchronizer.is_initialized {
         return Err(SynchronizerError::NotInitialized.into());
@@ -407,6 +423,105 @@ pub fn process_set_remaining_dollar_cap(
 
     synchronizer.remaining_dollar_cap = remaining_dollar_cap;
     SynchronizerData::pack(synchronizer, &mut synchronizer_account_info.data.borrow_mut())?;
+
+    Ok(())
+}
+
+pub fn process_withdraw_fee(
+    &self,
+    accounts: &[AccountInfo],
+    amount: u64,
+) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let synchronizer_collateral_account_info = next_account_info(account_info_iter)?;
+    let recipient_collateral_account_info = next_account_info(account_info_iter)?;
+    let synchronizer_account_info = next_account_info(account_info_iter)?;
+
+    if !synchronizer_account_info.owner.eq(&id()) {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    if !synchronizer_account_info.key.eq(&self.synchronizer_key)  {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    if !synchronizer_account_info.is_signer {
+        return Err(SynchronizerError::InvalidSigner.into());
+    }
+
+    let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
+    if !synchronizer.is_initialized {
+        return Err(SynchronizerError::NotInitialized.into());
+    }
+
+    if synchronizer.withdrawable_fee_amount < amount {
+        return Err(SynchronizerError::InsufficientFunds.into());
+    }
+
+    let instruction = transfer(
+        &spl_token::id(),
+        &synchronizer_collateral_account_info.key,
+        &recipient_collateral_account_info.key,
+        &self.synchronizer_key,
+        &[],
+        amount
+    ).unwrap();
+    let account_infos = [
+        synchronizer_collateral_account_info.clone(),
+        recipient_collateral_account_info.clone(),
+        synchronizer_account_info.clone(),
+    ];
+    self.process_token_instruction(instruction, &account_infos).unwrap();
+    msg!("Transfer {} collateral asset from synchronizer to recipient {}", amount, recipient_collateral_account_info.key);
+
+    synchronizer.withdrawable_fee_amount -= amount;
+    SynchronizerData::pack(synchronizer, &mut synchronizer_account_info.data.borrow_mut())?;
+
+    Ok(())
+}
+
+pub fn process_withdraw_collateral(
+    &self,
+    accounts: &[AccountInfo],
+    amount: u64,
+) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let synchronizer_collateral_account_info = next_account_info(account_info_iter)?;
+    let recipient_collateral_account_info = next_account_info(account_info_iter)?;
+    let synchronizer_account_info = next_account_info(account_info_iter)?;
+
+    if !synchronizer_account_info.owner.eq(&id()) {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    if !synchronizer_account_info.key.eq(&self.synchronizer_key)  {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    if !synchronizer_account_info.is_signer {
+        return Err(SynchronizerError::InvalidSigner.into());
+    }
+
+    let synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
+    if !synchronizer.is_initialized {
+        return Err(SynchronizerError::NotInitialized.into());
+    }
+
+    let instruction = transfer(
+        &spl_token::id(),
+        &synchronizer_collateral_account_info.key,
+        &recipient_collateral_account_info.key,
+        &self.synchronizer_key,
+        &[],
+        amount
+    ).unwrap();
+    let account_infos = [
+        synchronizer_collateral_account_info.clone(),
+        recipient_collateral_account_info.clone(),
+        synchronizer_account_info.clone(),
+    ];
+    self.process_token_instruction(instruction, &account_infos).unwrap();
+    msg!("Transfer {} collateral asset from synchronizer to recipient {}", amount, recipient_collateral_account_info.key);
 
     Ok(())
 }
@@ -476,14 +591,18 @@ pub fn process_instruction(
             self.process_set_remaining_dollar_cap(accounts, remaining_dollar_cap)
         }
 
-        // TODO: make instructions
-        SynchronizerInstruction::WithdrawFee => {
+        SynchronizerInstruction::WithdrawFee {
+            amount
+        } => {
             msg!("Instruction: WithdrawFee");
-            Ok(())
+            self.process_withdraw_fee(accounts, amount)
         }
-        SynchronizerInstruction::WithdrawCollateral => {
+
+        SynchronizerInstruction::WithdrawCollateral {
+            amount
+        } => {
             msg!("Instruction: WithdrawCollateral");
-            Ok(())
+            self.process_withdraw_collateral(accounts, amount)
         }
     }
 }
@@ -890,6 +1009,142 @@ mod test {
         assert_eq!(
             Err(SynchronizerError::InsufficientFunds.into()),
             processor.process_sell_for(&accounts, mul_stocks, sell_fiat_amount, fee, &prices, &oracles)
+        );
+    }
+
+    #[test]
+    fn test_withdraw() {
+        let program_id = id();
+        let synchronizer_key = Pubkey::new_unique();
+        let mut synchronizer_account = SolanaAccount::new(init_acc_minimum_balance(), SynchronizerData::get_packed_len(), &program_id);
+        let recipient_key = Pubkey::new_unique();
+        let mut recipient_account = SolanaAccount::default();
+        let rent_sysvar_key = sysvar::rent::id();
+        let mut rent_sysvar = create_account_for_test(&Rent::default());
+        let collateral_token_key = Pubkey::new_unique();
+        let oracles = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+
+        // Infrastructure preparing
+        // Create and init collateral token
+        let decimals = Processor::DEFAULT_DECIMALS;
+        let mut collateral_asset_mint = SolanaAccount::new(mint_minimum_balance(), Mint::get_packed_len(), &spl_token::id());
+        do_token_program(
+            initialize_mint(&spl_token::id(), &collateral_token_key, &synchronizer_key, None, decimals).unwrap(),
+            vec![&mut collateral_asset_mint, &mut rent_sysvar],
+        ).unwrap();
+
+        // Create and init token associated accounts for synchronizer
+        let synchronizer_collateral_key = Pubkey::new_unique();
+        let mut synchronizer_collateral_account = SolanaAccount::new(account_minimum_balance(), Account::get_packed_len(), &spl_token::id());
+        do_token_program(
+            initialize_account(&spl_token::id(), &synchronizer_collateral_key, &collateral_token_key, &synchronizer_key).unwrap(),
+            vec![
+                &mut synchronizer_collateral_account,
+                &mut collateral_asset_mint,
+                &mut synchronizer_account,
+                &mut rent_sysvar,
+            ],
+        ).unwrap();
+
+        // Create token associated accounts for recipient
+        let recipient_collateral_key = Pubkey::new_unique();
+        let mut recipient_collateral_account = SolanaAccount::new(account_minimum_balance(), Account::get_packed_len(), &spl_token::id());
+        do_token_program(
+            initialize_account(&spl_token::id(), &recipient_collateral_key, &collateral_token_key, &recipient_key).unwrap(),
+            vec![
+                &mut recipient_collateral_account,
+                &mut collateral_asset_mint,
+                &mut recipient_account,
+                &mut rent_sysvar,
+            ],
+        ).unwrap();
+
+        // Mint some collateral asset to synchronizer account
+        let amount = spl_token::ui_amount_to_amount(500.0, decimals);
+        do_token_program(
+            mint_to(&spl_token::id(), &collateral_token_key, &synchronizer_collateral_key, &synchronizer_key, &[], amount).unwrap(),
+            vec![&mut collateral_asset_mint, &mut synchronizer_collateral_account, &mut synchronizer_account],
+        ).unwrap();
+
+        // Mint some collateral asset to recipient account
+        let amount = spl_token::ui_amount_to_amount(100.0, decimals);
+        do_token_program(
+            mint_to(&spl_token::id(), &collateral_token_key, &recipient_collateral_key, &synchronizer_key, &[], amount).unwrap(),
+            vec![&mut collateral_asset_mint, &mut recipient_collateral_account, &mut synchronizer_account],
+        ).unwrap();
+
+        // Initialize processor and synchronizer account
+        let processor = Processor {
+            synchronizer_key: synchronizer_key,
+            oracles_keys: oracles.iter().cloned().collect()
+        };
+
+        let synchronizer_account_info = (&synchronizer_key, true, &mut synchronizer_account).into_account_info();
+        let synchronizer_collateral_info = (&synchronizer_collateral_key, false, &mut synchronizer_collateral_account).into_account_info();
+        let recipient_collateral_info = (&recipient_collateral_key, false, &mut recipient_collateral_account).into_account_info();
+        let rent_info = (&rent_sysvar_key, false, &mut rent_sysvar).into_account_info();
+
+        let accounts = vec![
+            synchronizer_account_info.clone(),
+            rent_info.clone(),
+        ];
+        processor.process_initialize_synchronizer_account(&accounts, collateral_token_key, spl_token::ui_amount_to_amount(500.0, decimals), spl_token::ui_amount_to_amount(250.0, decimals), oracles.len() as u64).unwrap();
+
+        let accounts = vec![
+            synchronizer_collateral_info.clone(),
+            recipient_collateral_info.clone(),
+            synchronizer_account_info.clone(),
+        ];
+
+        let amount = spl_token::ui_amount_to_amount(300.0, decimals);
+        assert_eq!(
+            Err(SynchronizerError::InsufficientFunds.into()),
+            processor.process_withdraw_fee(&accounts, amount)
+        );
+
+        assert_eq!(
+            Account::unpack_unchecked(&synchronizer_collateral_info.data.borrow()).unwrap().amount,
+            500000000000
+        );
+        assert_eq!(
+            Account::unpack_unchecked(&recipient_collateral_info.data.borrow()).unwrap().amount,
+            100000000000
+        );
+        assert_eq!(
+            SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow()).unwrap().withdrawable_fee_amount,
+            250000000000
+        );
+
+        let amount = spl_token::ui_amount_to_amount(50.0, decimals);
+        processor.process_withdraw_fee(&accounts, amount).unwrap();
+
+        assert_eq!(
+            Account::unpack_unchecked(&synchronizer_collateral_info.data.borrow()).unwrap().amount,
+            450000000000
+        );
+        assert_eq!(
+            Account::unpack_unchecked(&recipient_collateral_info.data.borrow()).unwrap().amount,
+            150000000000
+        );
+        assert_eq!(
+            SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow()).unwrap().withdrawable_fee_amount,
+            200000000000
+        );
+
+        let amount = spl_token::ui_amount_to_amount(50.0, decimals);
+        processor.process_withdraw_collateral(&accounts, amount).unwrap();
+
+        assert_eq!(
+            Account::unpack_unchecked(&synchronizer_collateral_info.data.borrow()).unwrap().amount,
+            400000000000
+        );
+        assert_eq!(
+            Account::unpack_unchecked(&recipient_collateral_info.data.borrow()).unwrap().amount,
+            200000000000
+        );
+        assert_eq!(
+            SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow()).unwrap().withdrawable_fee_amount,
+            200000000000
         );
     }
 
