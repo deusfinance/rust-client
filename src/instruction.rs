@@ -361,6 +361,7 @@ impl SynchronizerInstruction {
     }
 }
 
+/// Creates a `BuyFor` instruction
 pub fn buy_for(
     program_id: &Pubkey,
     multiplier: u64,
@@ -384,7 +385,7 @@ pub fn buy_for(
         prices: prices.iter().cloned().collect(),
     }.pack();
 
-    let mut accounts = Vec::with_capacity(6);
+    let mut accounts = Vec::with_capacity(7);
     accounts.push(AccountMeta::new(*mint, false));
     accounts.push(AccountMeta::new(*user_collateral_token_account, false));
     accounts.push(AccountMeta::new(*user_fiat_token_account, false));
@@ -400,6 +401,7 @@ pub fn buy_for(
     })
 }
 
+/// Creates a `SellFor` instruction
 pub fn sell_for(
     program_id: &Pubkey,
     multiplier: u64,
@@ -423,7 +425,7 @@ pub fn sell_for(
         prices: prices.iter().cloned().collect(),
     }.pack();
 
-    let mut accounts = Vec::with_capacity(6);
+    let mut accounts = Vec::with_capacity(7);
     accounts.push(AccountMeta::new(*mint, false));
     accounts.push(AccountMeta::new(*user_collateral_token_account, false));
     accounts.push(AccountMeta::new(*user_fiat_token_account, false));
@@ -456,7 +458,7 @@ pub fn initialize_synchronizer_account(
         minimum_required_signature,
     }.pack();
 
-    let mut accounts = Vec::with_capacity(1);
+    let mut accounts = Vec::with_capacity(2);
     accounts.push(AccountMeta::new(*synchronizer_authority, true));
     accounts.push(AccountMeta::new_readonly(sysvar::rent::id(), false));
 
@@ -467,6 +469,64 @@ pub fn initialize_synchronizer_account(
     })
 }
 
+/// Creates a `SetMinimumRequiredSignature` instruction
+pub fn set_minimum_required_signature(
+    program_id: &Pubkey,
+    minimum_required_signature: u64,
+    synchronizer_authority: &Pubkey,
+) -> Result<Instruction, ProgramError> {
+    check_program_account(program_id)?;
+    let data = SynchronizerInstruction::SetMinimumRequiredSignature { minimum_required_signature }.pack();
+
+    let mut accounts = Vec::with_capacity(1);
+    accounts.push(AccountMeta::new_readonly(*synchronizer_authority, true));
+
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    })
+}
+
+/// Creates a `SetCollateralToken` instruction
+pub fn set_collateral_token(
+    program_id: &Pubkey,
+    collateral_token: &Pubkey,
+    synchronizer_authority: &Pubkey,
+) -> Result<Instruction, ProgramError> {
+    check_program_account(program_id)?;
+    let data = SynchronizerInstruction::SetCollateralToken { collateral_token_key: *collateral_token }.pack();
+
+    let mut accounts = Vec::with_capacity(1);
+    accounts.push(AccountMeta::new_readonly(*synchronizer_authority, true));
+
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    })
+}
+
+/// Creates a `SetRemainingDollarCap` instruction
+pub fn set_remaining_dollar_cap(
+    program_id: &Pubkey,
+    remaining_dollar_cap: u64,
+    synchronizer_authority: &Pubkey,
+) -> Result<Instruction, ProgramError> {
+    check_program_account(program_id)?;
+    let data = SynchronizerInstruction::SetRemainingDollarCap { remaining_dollar_cap }.pack();
+
+    let mut accounts = Vec::with_capacity(1);
+    accounts.push(AccountMeta::new_readonly(*synchronizer_authority, true));
+
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    })
+}
+
+/// Creates a `WithdrawFee` instruction
 pub fn withdraw_fee(
     program_id: &Pubkey,
     amount: u64,
@@ -477,7 +537,7 @@ pub fn withdraw_fee(
     check_program_account(program_id)?;
     let data = SynchronizerInstruction::WithdrawFee { amount }.pack();
 
-    let mut accounts = Vec::with_capacity(1);
+    let mut accounts = Vec::with_capacity(4);
     accounts.push(AccountMeta::new(*synchronizer_collateral_token_account, false));
     accounts.push(AccountMeta::new(*recipient_collateral_token_account, false));
     accounts.push(AccountMeta::new(*synchronizer_authority, true));
@@ -490,6 +550,7 @@ pub fn withdraw_fee(
     })
 }
 
+/// Creates a `WithdrawCollateral` instruction
 pub fn withdraw_collateral(
     program_id: &Pubkey,
     amount: u64,
@@ -500,7 +561,7 @@ pub fn withdraw_collateral(
     check_program_account(program_id)?;
     let data = SynchronizerInstruction::WithdrawCollateral { amount }.pack();
 
-    let mut accounts = Vec::with_capacity(1);
+    let mut accounts = Vec::with_capacity(4);
     accounts.push(AccountMeta::new(*synchronizer_collateral_token_account, false));
     accounts.push(AccountMeta::new(*recipient_collateral_token_account, false));
     accounts.push(AccountMeta::new(*synchronizer_authority, true));

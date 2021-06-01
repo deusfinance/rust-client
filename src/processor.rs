@@ -604,7 +604,7 @@ impl PrintProgramError for SynchronizerError {
 // Unit tests
 #[cfg(test)]
 mod test {
-    use solana_program::{account_info::IntoAccountInfo, instruction::Instruction, program_error::ProgramError, program_pack::Pack, sysvar};
+    use solana_program::{instruction::Instruction, program_error::ProgramError, program_pack::Pack};
     use solana_sdk::{
         account::{create_is_signer_account_infos,Account as SolanaAccount,create_account_for_test},
     };
@@ -1048,59 +1048,100 @@ mod test {
 
     #[test]
     fn test_admin_setters() {
-        // TODO: refactor
-        let program_id = id();
         let synchronizer_key = Pubkey::new_unique();
-        let mut synchronizer_account = SolanaAccount::new(init_acc_minimum_balance(), SynchronizerData::get_packed_len(), &program_id);
-        let rent_sysvar_key = sysvar::rent::id();
+        let mut synchronizer_account = SolanaAccount::new(init_acc_minimum_balance(), SynchronizerData::get_packed_len(), &id());
         let mut rent_sysvar_account = create_account_for_test(&Rent::default());
+
+        // BadCase: bad synchronizer account
+        let mut fake_acc = SolanaAccount::default();
+        assert_eq!(
+            Err(SynchronizerError::AccessDenied.into()),
+            do_process(
+                crate::instruction::set_minimum_required_signature(&id(), 123456, &synchronizer_key).unwrap(),
+                vec![&mut fake_acc]
+            )
+        );
+        assert_eq!(
+            Err(SynchronizerError::AccessDenied.into()),
+            do_process(
+                crate::instruction::set_remaining_dollar_cap(&id(), 123456, &synchronizer_key).unwrap(),
+                vec![&mut fake_acc]
+            )
+        );
+        assert_eq!(
+            Err(SynchronizerError::AccessDenied.into()),
+            do_process(
+                crate::instruction::set_collateral_token(&id(), &Pubkey::new_unique(), &synchronizer_key).unwrap(),
+                vec![&mut fake_acc]
+            )
+        );
+
+        // BadCase: Synchronizer account is not initialized
+        assert_eq!(
+            Err(SynchronizerError::NotInitialized.into()),
+            do_process(
+                crate::instruction::set_minimum_required_signature(&id(), 123456, &synchronizer_key).unwrap(),
+                vec![&mut synchronizer_account]
+            )
+        );
+        assert_eq!(
+            Err(SynchronizerError::NotInitialized.into()),
+            do_process(
+                crate::instruction::set_remaining_dollar_cap(&id(), 123456, &synchronizer_key).unwrap(),
+                vec![&mut synchronizer_account]
+            )
+        );
+        assert_eq!(
+            Err(SynchronizerError::NotInitialized.into()),
+            do_process(
+                crate::instruction::set_collateral_token(&id(), &Pubkey::new_unique(), &synchronizer_key).unwrap(),
+                vec![&mut synchronizer_account]
+            )
+        );
+
         let start_collateral_token_key = Pubkey::new_unique();
         let oracles = vec![Pubkey::new_unique(), Pubkey::new_unique()];
-
-        let synchronizer_account_info = (&synchronizer_key, true, &mut synchronizer_account).into_account_info();
-        let rent_info = (&rent_sysvar_key, false, &mut rent_sysvar_account).into_account_info();
-
         let start_remaining_dollar_cap: u64 = 10;
         let start_minimum_required_signature: u64 = oracles.len() as u64;
+        do_process(
+            crate::instruction::initialize_synchronizer_account(
+                &id(),
+                &start_collateral_token_key,
+                start_remaining_dollar_cap,
+                start_minimum_required_signature,
+                oracles.len() as u64,
+                &synchronizer_key
+            ).unwrap(),
+            vec![&mut synchronizer_account, &mut rent_sysvar_account]
+        ).unwrap();
 
-        let mut fake_acc = SolanaAccount::default();
-        let bad_accounts = vec![
-            (&synchronizer_key, true, &mut fake_acc).into_account_info(),
-            rent_info.clone(),
-        ];
-        assert_eq!(Err(SynchronizerError::AccessDenied.into()), Processor::process_set_minimum_required_signature(&bad_accounts, 123456));
-        assert_eq!(Err(SynchronizerError::AccessDenied.into()), Processor::process_set_remaining_dollar_cap(&bad_accounts, 123456));
-        assert_eq!(Err(SynchronizerError::AccessDenied.into()), Processor::process_set_collateral_token(&bad_accounts, Pubkey::new_unique()));
-
-        let accounts = vec![
-            synchronizer_account_info.clone(),
-            rent_info.clone(),
-        ];
-
-        assert_eq!(Err(SynchronizerError::NotInitialized.into()), Processor::process_set_minimum_required_signature(&accounts, 123456));
-        assert_eq!(Err(SynchronizerError::NotInitialized.into()), Processor::process_set_remaining_dollar_cap(&accounts, 123456));
-        assert_eq!(Err(SynchronizerError::NotInitialized.into()), Processor::process_set_collateral_token(&accounts, Pubkey::new_unique()));
-
-        Processor::process_initialize_synchronizer_account(&accounts, start_collateral_token_key, start_remaining_dollar_cap, 0, start_minimum_required_signature).unwrap();
-
-        let sync_data = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
+        let sync_data = SynchronizerData::unpack(&synchronizer_account.data).unwrap();
         assert_eq!(sync_data.minimum_required_signature, start_minimum_required_signature);
         assert_eq!(sync_data.remaining_dollar_cap, start_remaining_dollar_cap);
         assert_eq!(sync_data.collateral_token_key, start_collateral_token_key);
 
         let minimum_required_signature = 3;
-        Processor::process_set_minimum_required_signature(&accounts, minimum_required_signature).unwrap();
-        let sync_data = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
+        do_process(
+            crate::instruction::set_minimum_required_signature(&id(), minimum_required_signature, &synchronizer_key).unwrap(),
+            vec![&mut synchronizer_account]
+        ).unwrap();
+        let sync_data = SynchronizerData::unpack(&synchronizer_account.data).unwrap();
         assert_eq!(sync_data.minimum_required_signature, minimum_required_signature);
 
         let remaining_dollar_cap: u64 = 123456;
-        Processor::process_set_remaining_dollar_cap(&accounts, remaining_dollar_cap).unwrap();
-        let sync_data = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
+        do_process(
+            crate::instruction::set_remaining_dollar_cap(&id(), remaining_dollar_cap, &synchronizer_key).unwrap(),
+            vec![&mut synchronizer_account]
+        ).unwrap();
+        let sync_data = SynchronizerData::unpack(&synchronizer_account.data).unwrap();
         assert_eq!(sync_data.remaining_dollar_cap, remaining_dollar_cap);
 
         let collateral_token_key = Pubkey::new_unique();
-        Processor::process_set_collateral_token(&accounts, collateral_token_key).unwrap();
-        let sync_data = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
+        do_process(
+            crate::instruction::set_collateral_token(&id(), &collateral_token_key, &synchronizer_key).unwrap(),
+            vec![&mut synchronizer_account]
+        ).unwrap();
+        let sync_data = SynchronizerData::unpack(&synchronizer_account.data).unwrap();
         assert_eq!(sync_data.collateral_token_key, collateral_token_key);
     }
 
