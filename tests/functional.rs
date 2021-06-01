@@ -133,6 +133,58 @@ async fn initialize_synchronizer_account(
     Ok(())
 }
 
+async fn withdraw_fee(
+    banks_client: &mut BanksClient,
+    payer: &Keypair,
+    recent_blockhash: &Hash,
+    amount: u64,
+    synchronizer_collateral_token_account: &Pubkey,
+    recipient_collateral_token_account: &Pubkey,
+    synchronizer_authority: &Keypair,
+) -> Result<(), TransportError> {
+    let mut transaction = Transaction::new_with_payer(
+        &[synchronizer::instruction::withdraw_fee(
+                &id(),
+                amount,
+                &synchronizer_collateral_token_account,
+                &recipient_collateral_token_account,
+                &synchronizer_authority.pubkey(),
+            )
+            .unwrap()
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[payer, synchronizer_authority], *recent_blockhash);
+    banks_client.process_transaction(transaction).await?;
+    Ok(())
+}
+
+async fn withdraw_collateral(
+    banks_client: &mut BanksClient,
+    payer: &Keypair,
+    recent_blockhash: &Hash,
+    amount: u64,
+    synchronizer_collateral_token_account: &Pubkey,
+    recipient_collateral_token_account: &Pubkey,
+    synchronizer_authority: &Keypair,
+) -> Result<(), TransportError> {
+    let mut transaction = Transaction::new_with_payer(
+        &[synchronizer::instruction::withdraw_collateral(
+                &id(),
+                amount,
+                &synchronizer_collateral_token_account,
+                &recipient_collateral_token_account,
+                &synchronizer_authority.pubkey(),
+            )
+            .unwrap()
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[payer, synchronizer_authority], *recent_blockhash);
+    banks_client.process_transaction(transaction).await?;
+    Ok(())
+}
+
 async fn sell_for(
     banks_client: &mut BanksClient,
     payer: &Keypair,
@@ -474,5 +526,165 @@ async fn test_synchronizer_public_api() {
     // TODO: check bad access
 }
 
-// TODO: func test_withdraw
 // TODO: func test admin setters (accses)
+
+#[tokio::test]
+async fn test_synchronizer_withdraw() {
+    let program_test = ProgramTest::new(
+        "synchronizer",
+        id(),
+        processor!(Processor::process_instruction),
+    );
+
+    let (mut banks_client, payer, recent_blockhash) = program_test.start().await;
+    let synchronizer_key = Keypair::new();
+    let recipient_key = Keypair::new();
+    let collateral_owner_key = Keypair::new();
+
+    let rent = banks_client.get_rent().await.unwrap();
+    let mint_rent = rent.minimum_balance(spl_token::state::Mint::LEN);
+    let account_rent = rent.minimum_balance(spl_token::state::Account::LEN);
+    let synchronizer_data_rent = rent.minimum_balance(SynchronizerData::LEN);
+
+    // Infrastructure preparing
+    // Create collateral token mint
+    let decimals = Processor::DEFAULT_DECIMALS;
+    let collateral_token_key = Keypair::new();
+    create_mint(
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        &collateral_token_key,
+        mint_rent,
+        &collateral_owner_key.pubkey(),
+        decimals
+    ).await.unwrap();
+
+    // Create and init token associated accounts for synchronizer
+    let synchronizer_collateral_account = Keypair::new();
+    create_token_account(
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        &synchronizer_collateral_account,
+        account_rent,
+        &collateral_token_key.pubkey(),
+        &synchronizer_key.pubkey()
+    ).await.unwrap();
+
+    // Create token associated accounts for recipient
+    let recipient_collateral_account = Keypair::new();
+    create_token_account(
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        &recipient_collateral_account,
+        account_rent,
+        &collateral_token_key.pubkey(),
+        &recipient_key.pubkey()
+    ).await.unwrap();
+
+    // Mint some collateral asset to synchronizer account
+    mint_tokens_to(
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        &collateral_token_key.pubkey(),
+        &synchronizer_collateral_account.pubkey(),
+        &collateral_owner_key,
+        spl_token::ui_amount_to_amount(500.0, decimals)
+    ).await.unwrap();
+
+    // Mint some collateral asset to recipient account
+    mint_tokens_to(
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        &collateral_token_key.pubkey(),
+        &recipient_collateral_account.pubkey(),
+        &collateral_owner_key,
+        spl_token::ui_amount_to_amount(100.0, decimals)
+    ).await.unwrap();
+
+    // Initialize Synchronizer account
+    let oracles = vec![
+        Keypair::new(),
+        Keypair::new(),
+    ];
+
+    initialize_synchronizer_account(
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        synchronizer_data_rent,
+        &collateral_token_key.pubkey(),
+        spl_token::ui_amount_to_amount(500.0, decimals),
+        spl_token::ui_amount_to_amount(250.0, decimals),
+        oracles.len() as u64,
+        &synchronizer_key
+    ).await.unwrap();
+
+    assert_eq!(
+        get_token_balance(&mut banks_client, &synchronizer_collateral_account.pubkey()).await,
+        500_000_000_000
+    );
+    assert_eq!(
+        get_token_balance(&mut banks_client, &recipient_collateral_account.pubkey()).await,
+        100_000_000_000
+    );
+    assert_eq!(
+        get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await.withdrawable_fee_amount,
+        250_000_000_000
+    );
+
+    // Test withdraw_fee
+    let amount = spl_token::ui_amount_to_amount(50.0, decimals);
+    withdraw_fee(
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        amount,
+        &synchronizer_collateral_account.pubkey(),
+        &recipient_collateral_account.pubkey(),
+        &synchronizer_key
+    ).await.unwrap();
+
+    assert_eq!(
+        get_token_balance(&mut banks_client, &synchronizer_collateral_account.pubkey()).await,
+        450_000_000_000
+    );
+    assert_eq!(
+        get_token_balance(&mut banks_client, &recipient_collateral_account.pubkey()).await,
+        150_000_000_000
+    );
+    assert_eq!(
+        get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await.withdrawable_fee_amount,
+        200_000_000_000
+    );
+
+    // Test withdraw_collateral
+    let amount = spl_token::ui_amount_to_amount(50.0, decimals);
+    // Processor::process_withdraw_collateral(&accounts, amount).unwrap();
+    withdraw_collateral(
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        amount,
+        &synchronizer_collateral_account.pubkey(),
+        &recipient_collateral_account.pubkey(),
+        &synchronizer_key
+    ).await.unwrap();
+
+    assert_eq!(
+        get_token_balance(&mut banks_client, &synchronizer_collateral_account.pubkey()).await,
+        400_000_000_000
+    );
+    assert_eq!(
+        get_token_balance(&mut banks_client, &recipient_collateral_account.pubkey()).await,
+        200_000_000_000
+    );
+    assert_eq!(
+        get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await.withdrawable_fee_amount,
+        200_000_000_000
+    );
+}

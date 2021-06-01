@@ -80,7 +80,7 @@ pub enum SynchronizerInstruction {
     // Accounts expected by this instruction:
     // 0. [writable] The Synchronizer collateral token associated account (source)
     // 1. [writable] recipient collateral token associated account (detination)
-    // 2. [signer] The Synchronizer account authority
+    // 2. [writable, signer] The Synchronizer account authority
     // 3. [] Token program
     WithdrawFee {
         amount: u64
@@ -90,7 +90,7 @@ pub enum SynchronizerInstruction {
     // Accounts expected by this instruction:
     // 0. [writable] The Synchronizer collateral token associated account (source)
     // 1. [writable] recipient collateral token associated account (detination)
-    // 2. [signer] The Synchronizer account authority
+    // 2. [writable, signer] The Synchronizer account authority
     // 3. [] Token program
     WithdrawCollateral {
         amount: u64
@@ -459,6 +459,52 @@ pub fn initialize_synchronizer_account(
     let mut accounts = Vec::with_capacity(1);
     accounts.push(AccountMeta::new(*synchronizer_authority, true));
     accounts.push(AccountMeta::new_readonly(sysvar::rent::id(), false));
+
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    })
+}
+
+pub fn withdraw_fee(
+    program_id: &Pubkey,
+    amount: u64,
+    synchronizer_collateral_token_account: &Pubkey,
+    recipient_collateral_token_account: &Pubkey,
+    synchronizer_authority: &Pubkey,
+) -> Result<Instruction, ProgramError> {
+    check_program_account(program_id)?;
+    let data = SynchronizerInstruction::WithdrawFee { amount }.pack();
+
+    let mut accounts = Vec::with_capacity(1);
+    accounts.push(AccountMeta::new(*synchronizer_collateral_token_account, false));
+    accounts.push(AccountMeta::new(*recipient_collateral_token_account, false));
+    accounts.push(AccountMeta::new(*synchronizer_authority, true));
+    accounts.push(AccountMeta::new_readonly(spl_token::id(), false));
+
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    })
+}
+
+pub fn withdraw_collateral(
+    program_id: &Pubkey,
+    amount: u64,
+    synchronizer_collateral_token_account: &Pubkey,
+    recipient_collateral_token_account: &Pubkey,
+    synchronizer_authority: &Pubkey,
+) -> Result<Instruction, ProgramError> {
+    check_program_account(program_id)?;
+    let data = SynchronizerInstruction::WithdrawCollateral { amount }.pack();
+
+    let mut accounts = Vec::with_capacity(1);
+    accounts.push(AccountMeta::new(*synchronizer_collateral_token_account, false));
+    accounts.push(AccountMeta::new(*recipient_collateral_token_account, false));
+    accounts.push(AccountMeta::new(*synchronizer_authority, true));
+    accounts.push(AccountMeta::new_readonly(spl_token::id(), false));
 
     Ok(Instruction {
         program_id: *program_id,

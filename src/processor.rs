@@ -406,6 +406,7 @@ pub fn process_withdraw_fee(
     let synchronizer_collateral_account_info = next_account_info(account_info_iter)?;
     let recipient_collateral_account_info = next_account_info(account_info_iter)?;
     let synchronizer_account_info = next_account_info(account_info_iter)?;
+    let spl_token_info = next_account_info(account_info_iter)?;
 
     if !synchronizer_account_info.owner.eq(&id()) {
         return Err(SynchronizerError::AccessDenied.into());
@@ -433,7 +434,7 @@ pub fn process_withdraw_fee(
         amount
     ).unwrap();
     let account_infos = [
-        // spl_toke_info.clone(),
+        spl_token_info.clone(),
         synchronizer_collateral_account_info.clone(),
         recipient_collateral_account_info.clone(),
         synchronizer_account_info.clone(),
@@ -455,6 +456,7 @@ pub fn process_withdraw_collateral(
     let synchronizer_collateral_account_info = next_account_info(account_info_iter)?;
     let recipient_collateral_account_info = next_account_info(account_info_iter)?;
     let synchronizer_account_info = next_account_info(account_info_iter)?;
+    let spl_token_info = next_account_info(account_info_iter)?;
 
     if !synchronizer_account_info.owner.eq(&id()) {
         return Err(SynchronizerError::AccessDenied.into());
@@ -469,6 +471,10 @@ pub fn process_withdraw_collateral(
         return Err(SynchronizerError::NotInitialized.into());
     }
 
+    if Account::unpack(&synchronizer_collateral_account_info.data.borrow()).unwrap().amount < amount {
+        return Err(SynchronizerError::InsufficientFunds.into());
+    }
+
     let instruction = spl_token::instruction::transfer(
         &spl_token::id(),
         &synchronizer_collateral_account_info.key,
@@ -478,6 +484,7 @@ pub fn process_withdraw_collateral(
         amount
     ).unwrap();
     let account_infos = [
+        spl_token_info.clone(),
         synchronizer_collateral_account_info.clone(),
         recipient_collateral_account_info.clone(),
         synchronizer_account_info.clone(),
@@ -1041,6 +1048,7 @@ mod test {
 
     #[test]
     fn test_admin_setters() {
+        // TODO: refactor
         let program_id = id();
         let synchronizer_key = Pubkey::new_unique();
         let mut synchronizer_account = SolanaAccount::new(init_acc_minimum_balance(), SynchronizerData::get_packed_len(), &program_id);
@@ -1094,6 +1102,120 @@ mod test {
         Processor::process_set_collateral_token(&accounts, collateral_token_key).unwrap();
         let sync_data = SynchronizerData::unpack(&synchronizer_account_info.data.borrow()).unwrap();
         assert_eq!(sync_data.collateral_token_key, collateral_token_key);
+    }
+
+    #[test]
+    fn test_withdraw() {
+        let synchronizer_key = Pubkey::new_unique();
+        let mut synchronizer_account = SolanaAccount::new(init_acc_minimum_balance(), SynchronizerData::get_packed_len(), &id());
+        let recipient_key = Pubkey::new_unique();
+        let mut recipient_account = SolanaAccount::default();
+        let mut rent_sysvar = create_account_for_test(&Rent::default());
+        let mut spl_token_account = SolanaAccount::default();
+        let collateral_token_key = Pubkey::new_unique();
+        let oracles = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+
+        // Infrastructure preparing
+        // Create and init collateral token
+        let decimals = Processor::DEFAULT_DECIMALS;
+        let mut collateral_asset_mint = SolanaAccount::new(mint_minimum_balance(), Mint::get_packed_len(), &spl_token::id());
+        do_token_program(
+            spl_token::instruction::initialize_mint(&spl_token::id(), &collateral_token_key, &synchronizer_key, None, decimals).unwrap(),
+            vec![&mut collateral_asset_mint, &mut rent_sysvar],
+        ).unwrap();
+
+        // Create and init token associated accounts for synchronizer
+        let synchronizer_collateral_key = Pubkey::new_unique();
+        let mut synchronizer_collateral_account = SolanaAccount::new(account_minimum_balance(), Account::get_packed_len(), &spl_token::id());
+        do_token_program(
+            spl_token::instruction::initialize_account(&spl_token::id(), &synchronizer_collateral_key, &collateral_token_key, &synchronizer_key).unwrap(),
+            vec![
+                &mut synchronizer_collateral_account,
+                &mut collateral_asset_mint,
+                &mut synchronizer_account,
+                &mut rent_sysvar,
+            ],
+        ).unwrap();
+
+        // Create token associated accounts for recipient
+        let recipient_collateral_key = Pubkey::new_unique();
+        let mut recipient_collateral_account = SolanaAccount::new(account_minimum_balance(), Account::get_packed_len(), &spl_token::id());
+        do_token_program(
+            spl_token::instruction::initialize_account(&spl_token::id(), &recipient_collateral_key, &collateral_token_key, &recipient_key).unwrap(),
+            vec![
+                &mut recipient_collateral_account,
+                &mut collateral_asset_mint,
+                &mut recipient_account,
+                &mut rent_sysvar,
+            ],
+        ).unwrap();
+
+        // Mint some collateral asset to synchronizer account
+        let amount = spl_token::ui_amount_to_amount(500.0, decimals);
+        do_token_program(
+            spl_token::instruction::mint_to(&spl_token::id(), &collateral_token_key, &synchronizer_collateral_key, &synchronizer_key, &[], amount).unwrap(),
+            vec![&mut collateral_asset_mint, &mut synchronizer_collateral_account, &mut synchronizer_account],
+        ).unwrap();
+
+        // Mint some collateral asset to recipient account
+        let amount = spl_token::ui_amount_to_amount(100.0, decimals);
+        do_token_program(
+            spl_token::instruction::mint_to(&spl_token::id(), &collateral_token_key, &recipient_collateral_key, &synchronizer_key, &[], amount).unwrap(),
+            vec![&mut collateral_asset_mint, &mut recipient_collateral_account, &mut synchronizer_account],
+        ).unwrap();
+
+        // Initialize synchronizer account
+        do_process(
+            crate::instruction::initialize_synchronizer_account(
+                &id(),
+                &collateral_token_key,
+                spl_token::ui_amount_to_amount(500.0, decimals),
+                spl_token::ui_amount_to_amount(250.0, decimals),
+                oracles.len() as u64,
+                &synchronizer_key
+            ).unwrap(),
+            vec![&mut synchronizer_account, &mut rent_sysvar]
+        ).unwrap();
+
+        let amount = spl_token::ui_amount_to_amount(300.0, decimals);
+        assert_eq!(
+            Err(SynchronizerError::InsufficientFunds.into()),
+            do_process(
+                crate::instruction::withdraw_fee(
+                    &id(),
+                    amount,
+                    &synchronizer_collateral_key,
+                    &recipient_collateral_key,
+                    &synchronizer_key
+                ).unwrap(),
+                vec![
+                    &mut synchronizer_collateral_account,
+                    &mut recipient_collateral_account,
+                    &mut synchronizer_account,
+                    &mut spl_token_account
+                ]
+            )
+        );
+
+        let amount = spl_token::ui_amount_to_amount(3000.0, decimals);
+        assert_eq!(
+            Err(SynchronizerError::InsufficientFunds.into()),
+            do_process(
+                crate::instruction::withdraw_collateral(
+                    &id(),
+                    amount,
+                    &synchronizer_collateral_key,
+                    &recipient_collateral_key,
+                    &synchronizer_key
+                ).unwrap(),
+                vec![
+                    &mut synchronizer_collateral_account,
+                    &mut recipient_collateral_account,
+                    &mut synchronizer_account,
+                    &mut spl_token_account
+                ]
+            )
+        );
     }
 
     #[test]
