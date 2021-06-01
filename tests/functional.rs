@@ -133,15 +133,101 @@ async fn initialize_synchronizer_account(
     Ok(())
 }
 
+async fn sell_for(
+    banks_client: &mut BanksClient,
+    payer: &Keypair,
+    recent_blockhash: &Hash,
+    multiplier: u64,
+    amount: u64,
+    fee: u64,
+    prices: &Vec<u64>,
+    oracles: &Vec<Pubkey>,
+    fiat_mint: &Pubkey,
+    user_collateral_token_account: &Pubkey,
+    user_fiat_token_account: &Pubkey,
+    synchronizer_collateral_token_account: &Pubkey,
+    user_authority: &Keypair,
+    synchronizer_authority: &Keypair,
+) -> Result<(), TransportError> {
+    let mut transaction = Transaction::new_with_payer(
+        &[synchronizer::instruction::sell_for(
+                &id(),
+                multiplier,
+                amount,
+                fee,
+                &prices,
+                &oracles,
+                fiat_mint,
+                user_collateral_token_account,
+                user_fiat_token_account,
+                synchronizer_collateral_token_account,
+                &user_authority.pubkey(),
+                &synchronizer_authority.pubkey()
+            )
+            .unwrap()
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[payer, user_authority, synchronizer_authority], *recent_blockhash);
+    banks_client.process_transaction(transaction).await?;
+    Ok(())
+}
+
+async fn buy_for(
+    banks_client: &mut BanksClient,
+    payer: &Keypair,
+    recent_blockhash: &Hash,
+    multiplier: u64,
+    amount: u64,
+    fee: u64,
+    prices: &Vec<u64>,
+    oracles: &Vec<Pubkey>,
+    fiat_mint: &Pubkey,
+    user_collateral_token_account: &Pubkey,
+    user_fiat_token_account: &Pubkey,
+    synchronizer_collateral_token_account: &Pubkey,
+    user_authority: &Keypair,
+    synchronizer_authority: &Keypair,
+) -> Result<(), TransportError> {
+    let mut transaction = Transaction::new_with_payer(
+        &[synchronizer::instruction::buy_for(
+                &id(),
+                multiplier,
+                amount,
+                fee,
+                &prices,
+                &oracles,
+                fiat_mint,
+                user_collateral_token_account,
+                user_fiat_token_account,
+                synchronizer_collateral_token_account,
+                &user_authority.pubkey(),
+                &synchronizer_authority.pubkey()
+            )
+            .unwrap()
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[payer, user_authority, synchronizer_authority], *recent_blockhash);
+    banks_client.process_transaction(transaction).await?;
+    Ok(())
+}
+
 async fn get_token_balance(banks_client: &mut BanksClient, token_account: &Pubkey) -> u64 {
     let account = banks_client.get_account(*token_account).await.unwrap().unwrap();
     let account_data= spl_token::state::Account::unpack_from_slice(account.data.as_slice()).unwrap();
     account_data.amount
 }
 
+async fn get_synchronizer_data(banks_client: &mut BanksClient, synchronizer_key: &Pubkey) -> SynchronizerData {
+    let synch_acc = banks_client.get_account(*synchronizer_key).await.unwrap().unwrap();
+    assert_eq!(id(), synch_acc.owner);
+    synchronizer::state::SynchronizerData::unpack(&synch_acc.data).unwrap()
+}
+
 // Functional tests
 #[tokio::test]
-async fn test_synchronizer() {
+async fn test_synchronizer_public_api() {
     let program_test = ProgramTest::new(
         "synchronizer",
         id(),
@@ -210,7 +296,7 @@ async fn test_synchronizer() {
     let user_collateral_account = Keypair::new();
     create_token_account(
         &mut banks_client,
-        &payer, // TODO: user must pay?
+        &payer,
         &recent_blockhash,
         &user_collateral_account,
         account_rent,
@@ -221,7 +307,7 @@ async fn test_synchronizer() {
     let user_fiat_account = Keypair::new();
     create_token_account(
         &mut banks_client,
-        &payer, // TODO: user must pay?
+        &payer,
         &recent_blockhash,
         &user_fiat_account,
         account_rent,
@@ -232,7 +318,7 @@ async fn test_synchronizer() {
     // Mint some collateral tokens to Synchronizer
     mint_tokens_to(
         &mut banks_client,
-        &payer, // TODO: who is payer?
+        &payer,
         &recent_blockhash,
         &collateral_token_key.pubkey(),
         &synchronizer_collateral_account.pubkey(),
@@ -248,7 +334,7 @@ async fn test_synchronizer() {
     // Mint some collateral tokens to user
     mint_tokens_to(
         &mut banks_client,
-        &payer, // TODO: who is payer?
+        &payer,
         &recent_blockhash,
         &collateral_token_key.pubkey(),
         &user_collateral_account.pubkey(),
@@ -262,11 +348,11 @@ async fn test_synchronizer() {
         500_000_000_000
     );
 
-    // TODO: sunchronizer transactions tests (all create_accounts by transactions)
-    let oracles = [
+    let oracles = vec![
         Keypair::new(),
         Keypair::new(),
     ];
+    let oracle_pubkeys: Vec<Pubkey> = oracles.iter().map(|k| k.pubkey()).collect();
 
     // Initialize Synchronizer account
     initialize_synchronizer_account(
@@ -281,16 +367,112 @@ async fn test_synchronizer() {
         &synchronizer_key
     ).await.unwrap();
 
-    let synch_acc = banks_client.get_account(synchronizer_key.pubkey()).await.unwrap().unwrap();
-    assert_eq!(id(), synch_acc.owner);
-    let synchronizer = synchronizer::state::SynchronizerData::unpack(&synch_acc.data).unwrap();
+    let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
     assert_eq!(synchronizer.is_initialized, true);
     assert_eq!(synchronizer.collateral_token_key, collateral_token_key.pubkey());
     assert_eq!(synchronizer.minimum_required_signature, 2);
     assert_eq!(synchronizer.remaining_dollar_cap, 500_000_000_000);
     assert_eq!(synchronizer.withdrawable_fee_amount, 0);
 
-    // Test sell_for instruction
+    let user_fiat_balance_before = get_token_balance(&mut banks_client, &user_fiat_account.pubkey()).await;
+    let sync_collateral_balance_before = get_token_balance(&mut banks_client, &synchronizer_collateral_account.pubkey()).await;
+    let user_collateral_balance_before = get_token_balance(&mut banks_client, &user_collateral_account.pubkey()).await;
+
+    let mul_stocks = 2;
+    let fee = spl_token::ui_amount_to_amount(0.001, decimals);
+    let prices = vec![
+        spl_token::ui_amount_to_amount(0.5, decimals),
+        spl_token::ui_amount_to_amount(0.4, decimals)
+    ];
+
     // Test buy_for instruction
-    // TODO (check access): Test admin setter instruction
+    let buy_fiat_amount = spl_token::ui_amount_to_amount(200.0, decimals);
+    buy_for(
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        mul_stocks,
+        buy_fiat_amount,
+        fee,
+        &prices,
+        &oracle_pubkeys,
+        &fiat_token_key.pubkey(),
+        &user_collateral_account.pubkey(),
+        &user_fiat_account.pubkey(),
+        &synchronizer_collateral_account.pubkey(),
+        &user_key,
+        &synchronizer_key
+    ).await.unwrap();
+
+    // Check balances after buy_for
+    assert_eq!(
+        get_token_balance(&mut banks_client, &user_fiat_account.pubkey()).await,
+        user_fiat_balance_before + buy_fiat_amount
+    );
+
+    let collateral_amount: u64 = 100_000_000_000; // amount * price
+    let collateral_fee: u64 = 100_000_000; // collateral_amount * fee
+    assert_eq!(
+        get_token_balance(&mut banks_client, &synchronizer_collateral_account.pubkey()).await,
+        sync_collateral_balance_before + (collateral_amount + collateral_fee)
+    );
+    assert_eq!(
+        get_token_balance(&mut banks_client, &user_collateral_account.pubkey()).await,
+        user_collateral_balance_before - (collateral_amount + collateral_fee)
+    );
+
+    let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
+    assert_eq!(synchronizer.remaining_dollar_cap, 500_000_000_000 - (collateral_amount * mul_stocks));
+    assert_eq!(synchronizer.withdrawable_fee_amount, 0 + collateral_fee);
+
+    // TODO: check bad access
+
+    let user_fiat_balance_before = get_token_balance(&mut banks_client, &user_fiat_account.pubkey()).await;
+    let sync_collateral_balance_before = get_token_balance(&mut banks_client, &synchronizer_collateral_account.pubkey()).await;
+    let user_collateral_balance_before = get_token_balance(&mut banks_client, &user_collateral_account.pubkey()).await;
+
+    // Test sell_for instruction
+    let sell_fiat_amount = spl_token::ui_amount_to_amount(100.0, decimals);
+    sell_for(
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        mul_stocks,
+        sell_fiat_amount,
+        fee,
+        &prices,
+        &oracle_pubkeys,
+        &fiat_token_key.pubkey(),
+        &user_collateral_account.pubkey(),
+        &user_fiat_account.pubkey(),
+        &synchronizer_collateral_account.pubkey(),
+        &user_key,
+        &synchronizer_key
+    ).await.unwrap();
+
+    // Check balances afet sell_for
+    assert_eq!(
+        get_token_balance(&mut banks_client, &user_fiat_account.pubkey()).await,
+        user_fiat_balance_before - sell_fiat_amount
+    );
+
+    let collateral_amount: u64 = 40_000_000_000; // amount * price
+    let collateral_fee: u64 = 40_000_000; // collateral_amount * fee
+    assert_eq!(
+        get_token_balance(&mut banks_client, &synchronizer_collateral_account.pubkey()).await,
+        sync_collateral_balance_before - (collateral_amount - collateral_fee)
+    );
+    assert_eq!(
+        get_token_balance(&mut banks_client, &user_collateral_account.pubkey()).await,
+        user_collateral_balance_before + (collateral_amount - collateral_fee)
+    );
+
+    let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
+    assert_eq!(synchronizer.remaining_dollar_cap, 300_000_000_000 + (collateral_amount * mul_stocks));
+    assert_eq!(synchronizer.withdrawable_fee_amount, 100_000_000 + collateral_fee);
+
+    // TODO: check bad access
 }
+
+// TODO: func test_withdraw
+// TODO: func test admin setters (accses)

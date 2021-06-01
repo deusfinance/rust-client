@@ -17,6 +17,7 @@ pub enum SynchronizerInstruction {
     // 3. [writable] The Synchronizer collateral token associated account (Synchronizer destination)
     // 4. [signer] The user pubkey authority
     // 5. [writable, signer] The Synchronizer account authority
+    // 6. [] Token program
     BuyFor {
         multiplier: u64,
         amount: u64,
@@ -33,6 +34,7 @@ pub enum SynchronizerInstruction {
     // 3. [writable] The Synchronizer collateral token associated account (Synchronizer source)
     // 4. [signer] The user pubkey authority
     // 5. [writable, signer] The Synchronizer account authority
+    // 6. [] Token program
     SellFor {
         multiplier: u64,
         amount: u64,
@@ -79,6 +81,7 @@ pub enum SynchronizerInstruction {
     // 0. [writable] The Synchronizer collateral token associated account (source)
     // 1. [writable] recipient collateral token associated account (detination)
     // 2. [signer] The Synchronizer account authority
+    // 3. [] Token program
     WithdrawFee {
         amount: u64
     },
@@ -88,6 +91,7 @@ pub enum SynchronizerInstruction {
     // 0. [writable] The Synchronizer collateral token associated account (source)
     // 1. [writable] recipient collateral token associated account (detination)
     // 2. [signer] The Synchronizer account authority
+    // 3. [] Token program
     WithdrawCollateral {
         amount: u64
     },
@@ -142,10 +146,6 @@ impl SynchronizerInstruction {
                     // let (oracle, oracles_slice) = Self::unpack_pubkey(oracles_slice).unwrap();
                     let oracle = oracles_slice.get(i as usize * 32 .. i as usize * 32 + 32).unwrap();
                     let (oracle, _) = Self::unpack_pubkey(oracle).unwrap();
-                        // .and_then(|slice| Self::unpack_pubkey(slice).into()).unwrap();
-                        // .map(Self::unpack_pubkey)
-                        // .ok_or(InvalidInstruction)?;
-                    // oracle = oracle.ok();
                     oracles.push(oracle);
                 }
 
@@ -359,6 +359,84 @@ impl SynchronizerInstruction {
             Err(SynchronizerError::InvalidInstruction.into())
         }
     }
+}
+
+pub fn buy_for(
+    program_id: &Pubkey,
+    multiplier: u64,
+    amount: u64,
+    fee: u64,
+    prices: &Vec<u64>,
+    oracles: &Vec<Pubkey>,
+    mint: &Pubkey,
+    user_collateral_token_account: &Pubkey,
+    user_fiat_token_account: &Pubkey,
+    synchronizer_collateral_token_account: &Pubkey,
+    user_authority: &Pubkey,
+    synchronizer_authority: &Pubkey
+) -> Result<Instruction, ProgramError> {
+    check_program_account(program_id)?;
+    let data = SynchronizerInstruction::BuyFor {
+        amount,
+        fee,
+        multiplier,
+        oracles: oracles.iter().cloned().collect(),
+        prices: prices.iter().cloned().collect(),
+    }.pack();
+
+    let mut accounts = Vec::with_capacity(6);
+    accounts.push(AccountMeta::new(*mint, false));
+    accounts.push(AccountMeta::new(*user_collateral_token_account, false));
+    accounts.push(AccountMeta::new(*user_fiat_token_account, false));
+    accounts.push(AccountMeta::new(*synchronizer_collateral_token_account, false));
+    accounts.push(AccountMeta::new_readonly(*user_authority, true));
+    accounts.push(AccountMeta::new(*synchronizer_authority, true));
+    accounts.push(AccountMeta::new_readonly(spl_token::id(), false));
+
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    })
+}
+
+pub fn sell_for(
+    program_id: &Pubkey,
+    multiplier: u64,
+    amount: u64,
+    fee: u64,
+    prices: &Vec<u64>,
+    oracles: &Vec<Pubkey>,
+    mint: &Pubkey,
+    user_collateral_token_account: &Pubkey,
+    user_fiat_token_account: &Pubkey,
+    synchronizer_collateral_token_account: &Pubkey,
+    user_authority: &Pubkey,
+    synchronizer_authority: &Pubkey
+) -> Result<Instruction, ProgramError> {
+    check_program_account(program_id)?;
+    let data = SynchronizerInstruction::SellFor {
+        amount,
+        fee,
+        multiplier,
+        oracles: oracles.iter().cloned().collect(),
+        prices: prices.iter().cloned().collect(),
+    }.pack();
+
+    let mut accounts = Vec::with_capacity(6);
+    accounts.push(AccountMeta::new(*mint, false));
+    accounts.push(AccountMeta::new(*user_collateral_token_account, false));
+    accounts.push(AccountMeta::new(*user_fiat_token_account, false));
+    accounts.push(AccountMeta::new(*synchronizer_collateral_token_account, false));
+    accounts.push(AccountMeta::new_readonly(*user_authority, true));
+    accounts.push(AccountMeta::new(*synchronizer_authority, true));
+    accounts.push(AccountMeta::new_readonly(spl_token::id(), false));
+
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    })
 }
 
 /// Creates a `InitializeSynchronizerAccount` instruction
