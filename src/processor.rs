@@ -11,8 +11,8 @@ use spl_token::{instruction::{mint_to, burn, transfer}, processor::Processor as 
 solana_program::declare_id!("8nNo8sjfYvwouTPQXw5fJ2D6DWzcWsbeXQanDGELt4AG");
 
 /// Checks that the supplied program ID is the correct
-pub fn check_program_account(spl_token_program_id: &Pubkey) -> ProgramResult {
-    if spl_token_program_id != &id() {
+pub fn check_program_account(program_id: &Pubkey) -> ProgramResult {
+    if program_id != &id() {
         return Err(ProgramError::IncorrectProgramId);
     }
     Ok(())

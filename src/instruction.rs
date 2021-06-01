@@ -1,7 +1,7 @@
 //! Instructions supported by the Synchronizer.
 
-use crate::error::SynchronizerError;
-use solana_program::{program_error::ProgramError, pubkey::Pubkey};
+use crate::{error::SynchronizerError, processor::check_program_account};
+use solana_program::{instruction::{AccountMeta, Instruction}, program_error::ProgramError, pubkey::Pubkey, sysvar};
 use std::{mem::size_of, convert::TryInto};
 
 #[repr(C)]
@@ -359,6 +359,34 @@ impl SynchronizerInstruction {
             Err(SynchronizerError::InvalidInstruction.into())
         }
     }
+}
+
+/// Creates a `InitializeSynchronizerAccount` instruction
+pub fn initialize_synchronizer_account(
+    program_id: &Pubkey,
+    collateral_token_key: &Pubkey,
+    remaining_dollar_cap: u64,
+    withdrawable_fee_amount: u64,
+    minimum_required_signature: u64,
+    synchronizer_authority: &Pubkey,
+) -> Result<Instruction, ProgramError> {
+    check_program_account(program_id)?;
+    let data = SynchronizerInstruction::InitializeSynchronizerAccount {
+        collateral_token_key: *collateral_token_key,
+        remaining_dollar_cap,
+        withdrawable_fee_amount,
+        minimum_required_signature,
+    }.pack();
+
+    let mut accounts = Vec::with_capacity(1);
+    accounts.push(AccountMeta::new(*synchronizer_authority, true));
+    accounts.push(AccountMeta::new_readonly(sysvar::rent::id(), false));
+
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    })
 }
 
 #[cfg(test)]
