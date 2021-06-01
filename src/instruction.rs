@@ -608,6 +608,96 @@ mod test {
         let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
         assert_eq!(unpacked, check);
 
-        // TODO: other instruction packing tests
+        let check = SynchronizerInstruction::SellFor {
+            multiplier: 5,
+            amount: 215,
+            fee: 100,
+            prices: vec![211, 123, 300],
+            oracles: vec![
+                Pubkey::from_str("D2YHis8gk2wRHkMEY7bULLsFUk277KdodWFR1nJ9SRgb").unwrap(),
+                Pubkey::from_str("EExYKmkDnS5HuUhb33e5ZeGHdZPCdQKJcQXDQTyWSb4X").unwrap()
+            ]
+        };
+        let packed = check.pack();
+        let mut expect = Vec::from([1u8]);
+        expect.extend_from_slice(&[5, 0, 0, 0, 0, 0, 0, 0]);
+        expect.extend_from_slice(&[215, 0, 0, 0, 0, 0, 0, 0]);
+        expect.extend_from_slice(&[100, 0, 0, 0, 0, 0, 0, 0]);
+        expect.extend_from_slice(&[3]);
+        expect.extend_from_slice(&[211, 0, 0, 0, 0, 0, 0, 0]);
+        expect.extend_from_slice(&[123, 0, 0, 0, 0, 0, 0, 0]);
+        expect.extend_from_slice(&[44, 1, 0, 0, 0, 0, 0, 0]);
+        expect.extend_from_slice(&[2]);
+        expect.extend_from_slice(&[178, 177, 51, 164, 92, 30, 126, 138, 210, 146, 214, 193, 145, 103, 57, 185, 60, 120, 46, 119, 37, 184, 251, 108, 93, 90, 88, 249, 49, 176, 59, 160]);
+        expect.extend_from_slice(&[196, 187, 71, 168, 43, 226, 204, 130, 198, 182, 91, 6, 240, 228, 232, 228, 89, 217, 65, 173, 197, 180, 93, 22, 141, 243, 103, 79, 210, 0, 211, 76]);
+        assert_eq!(packed, expect);
+        let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
+        assert_eq!(unpacked, check);
+
+        let check = SynchronizerInstruction::InitializeSynchronizerAccount {
+            collateral_token_key: Pubkey::from_str("D2YHis8gk2wRHkMEY7bULLsFUk277KdodWFR1nJ9SRgb").unwrap(),
+            remaining_dollar_cap: 300,
+            withdrawable_fee_amount: 200,
+            minimum_required_signature: 3,
+        };
+        let packed = check.pack();
+        let mut expect = Vec::from([2u8]);
+        expect.extend_from_slice(&[178, 177, 51, 164, 92, 30, 126, 138, 210, 146, 214, 193, 145, 103, 57, 185, 60, 120, 46, 119, 37, 184, 251, 108, 93, 90, 88, 249, 49, 176, 59, 160]);
+        expect.extend_from_slice(&[44, 1, 0, 0, 0, 0, 0, 0]);
+        expect.extend_from_slice(&[200, 0, 0, 0, 0, 0, 0, 0]);
+        expect.extend_from_slice(&[3, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(packed, expect);
+        let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
+        assert_eq!(unpacked, check);
+
+        let check = SynchronizerInstruction::SetMinimumRequiredSignature {
+            minimum_required_signature: 3,
+        };
+        let packed = check.pack();
+        let mut expect = Vec::from([3u8]);
+        expect.extend_from_slice(&[3, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(packed, expect);
+        let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
+        assert_eq!(unpacked, check);
+
+        let check = SynchronizerInstruction::SetCollateralToken {
+            collateral_token_key: Pubkey::from_str("D2YHis8gk2wRHkMEY7bULLsFUk277KdodWFR1nJ9SRgb").unwrap()
+        };
+        let packed = check.pack();
+        let mut expect = Vec::from([4u8]);
+        expect.extend_from_slice(&[178, 177, 51, 164, 92, 30, 126, 138, 210, 146, 214, 193, 145, 103, 57, 185, 60, 120, 46, 119, 37, 184, 251, 108, 93, 90, 88, 249, 49, 176, 59, 160]);
+        assert_eq!(packed, expect);
+        let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
+        assert_eq!(unpacked, check);
+
+        let check = SynchronizerInstruction::SetRemainingDollarCap {
+            remaining_dollar_cap: 500_000_000_000
+        };
+        let packed = check.pack();
+        let mut expect = Vec::from([5u8]);
+        expect.extend_from_slice(&[0, 136, 82, 106, 116, 0, 0, 0]);
+        assert_eq!(packed, expect);
+        let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
+        assert_eq!(unpacked, check);
+
+        let check = SynchronizerInstruction::WithdrawFee {
+            amount: 500_000_000_000
+        };
+        let packed = check.pack();
+        let mut expect = Vec::from([6u8]);
+        expect.extend_from_slice(&[0, 136, 82, 106, 116, 0, 0, 0]);
+        assert_eq!(packed, expect);
+        let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
+        assert_eq!(unpacked, check);
+
+        let check = SynchronizerInstruction::WithdrawCollateral {
+            amount: 500_000_000_000
+        };
+        let packed = check.pack();
+        let mut expect = Vec::from([7u8]);
+        expect.extend_from_slice(&[0, 136, 82, 106, 116, 0, 0, 0]);
+        assert_eq!(packed, expect);
+        let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
+        assert_eq!(unpacked, check);
     }
 }
