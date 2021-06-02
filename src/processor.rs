@@ -129,7 +129,7 @@ pub fn process_buy_for(
         synchronizer_collateral_account_info.clone(),
         user_authority_info.clone(),
     ];
-    invoke(&instruction, &account_infos).unwrap();
+    invoke(&instruction, &account_infos)?;
     msg!("Transfer {} collateral tokens from user to synchronizer", collateral_amount + fee_amount);
 
     // Synchronizer mint fiat asset to user associated token account
@@ -147,7 +147,7 @@ pub fn process_buy_for(
         user_fiat_account_info.clone(),
         synchronizer_authority_info.clone(),
     ];
-    invoke(&instruction, &account_infos).unwrap();
+    invoke(&instruction, &account_infos)?;
     msg!("Mint {} fiat tokens to user_account", {amount});
 
     synchronizer.remaining_dollar_cap -= spl_token::ui_amount_to_amount(collateral_amount_ui * multiplier as f64, decimals);
@@ -232,6 +232,9 @@ pub fn process_sell_for(
     let fee_amount = spl_token::ui_amount_to_amount(fee_amount_ui, decimals);
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
+    if Account::unpack(&user_fiat_account_info.data.borrow()).unwrap().amount < amount {
+        return Err(SynchronizerError::InsufficientFunds.into());
+    }
     if synchronizer_collateral_account.amount < (collateral_amount - fee_amount) {
         return Err(SynchronizerError::InsufficientFunds.into());
     }
@@ -251,7 +254,7 @@ pub fn process_sell_for(
         fiat_asset_mint_info.clone(),
         user_authority_info.clone(),
     ];
-    invoke(&instruction, &account_infos).unwrap();
+    invoke(&instruction, &account_infos)?;
     msg!("Burn {} fiat assets from user_account", amount);
 
     // Transfer collateral token from synchronizer to user
@@ -262,14 +265,14 @@ pub fn process_sell_for(
         &synchronizer_authority_info.key,
         &[],
         collateral_amount - fee_amount
-    ).unwrap();
+    )?;
     let account_infos = [
         spl_token_info.clone(),
         synchronizer_collateral_account_info.clone(),
         user_collateral_account_info.clone(),
         synchronizer_authority_info.clone(),
     ];
-    invoke(&instruction, &account_infos).unwrap();
+    invoke(&instruction, &account_infos)?;
     msg!("Transfer {} collateral asset from synchronizer to user", collateral_amount - fee_amount);
 
     synchronizer.remaining_dollar_cap += spl_token::ui_amount_to_amount(collateral_amount_ui * multiplier as f64, decimals);
@@ -442,7 +445,7 @@ pub fn process_withdraw_fee(
         recipient_collateral_account_info.clone(),
         synchronizer_account_info.clone(),
     ];
-    invoke(&instruction, &account_infos).unwrap();
+    invoke(&instruction, &account_infos)?;
     msg!("Transfer {} collateral asset from synchronizer to recipient {}", amount, recipient_collateral_account_info.key);
 
     synchronizer.withdrawable_fee_amount -= amount;
@@ -492,7 +495,7 @@ pub fn process_withdraw_collateral(
         recipient_collateral_account_info.clone(),
         synchronizer_account_info.clone(),
     ];
-    invoke(&instruction, &account_infos).unwrap();
+    invoke(&instruction, &account_infos)?;
     msg!("Transfer {} collateral asset from synchronizer to recipient {}", amount, recipient_collateral_account_info.key);
 
     Ok(())

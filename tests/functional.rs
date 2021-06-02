@@ -503,8 +503,6 @@ async fn test_synchronizer_public_api() {
         spl_token::ui_amount_to_amount(0.4, decimals)
     ];
 
-    // TODO: check wrong collateral synchronizer token
-
     // Test buy_for instruction
     let buy_fiat_amount = spl_token::ui_amount_to_amount(200.0, decimals);
     buy_for(
@@ -544,8 +542,6 @@ async fn test_synchronizer_public_api() {
     let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
     assert_eq!(synchronizer.remaining_dollar_cap, 500_000_000_000 - (collateral_amount * mul_stocks));
     assert_eq!(synchronizer.withdrawable_fee_amount, 0 + collateral_fee);
-
-    // TODO: check bad access
 
     let user_fiat_balance_before = get_token_balance(&mut banks_client, &user_fiat_account.pubkey()).await;
     let sync_collateral_balance_before = get_token_balance(&mut banks_client, &synchronizer_collateral_account.pubkey()).await;
@@ -590,6 +586,139 @@ async fn test_synchronizer_public_api() {
     let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
     assert_eq!(synchronizer.remaining_dollar_cap, 300_000_000_000 + (collateral_amount * mul_stocks));
     assert_eq!(synchronizer.withdrawable_fee_amount, 100_000_000 + collateral_fee);
+
+    // Case: too big amount
+    let mut amount = get_token_balance(&mut banks_client, &user_collateral_account.pubkey()).await;
+    amount += spl_token::ui_amount_to_amount(500.0, decimals);
+    assert_eq!(
+        TransactionError::InstructionError(0, InstructionError::Custom(3)),
+        buy_for(
+            &mut banks_client,
+            &payer,
+            &recent_blockhash,
+            2,
+            amount,
+            1_000_000,
+            &prices,
+            &oracle_pubkeys,
+            &fiat_token_key.pubkey(),
+            &user_collateral_account.pubkey(),
+            &user_fiat_account.pubkey(),
+            &synchronizer_collateral_account.pubkey(),
+            &user_key,
+            &synchronizer_key
+        ).await.unwrap_err().unwrap(),
+    );
+
+    let mut amount = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await.remaining_dollar_cap;
+    amount += spl_token::ui_amount_to_amount(500.0, decimals);
+    assert_eq!(
+        TransactionError::InstructionError(0, InstructionError::Custom(3)),
+        sell_for(
+            &mut banks_client,
+            &payer,
+            &recent_blockhash,
+            2,
+            amount,
+            1_000_000,
+            &prices,
+            &oracle_pubkeys,
+            &fiat_token_key.pubkey(),
+            &user_collateral_account.pubkey(),
+            &user_fiat_account.pubkey(),
+            &synchronizer_collateral_account.pubkey(),
+            &user_key,
+            &synchronizer_key
+        ).await.unwrap_err().unwrap(),
+    );
+
+    // Case: change collateral token key
+    let new_collateral_token_key = Keypair::new();
+    set_collateral_token(&mut banks_client, &payer, &recent_blockhash, &new_collateral_token_key.pubkey(), &synchronizer_key).await.unwrap();
+
+    assert_eq!(
+        TransactionError::InstructionError(0, InstructionError::Custom(8)),
+        buy_for(
+            &mut banks_client,
+            &payer,
+            &recent_blockhash,
+            2,
+            123_000_000_000,
+            1_000_000,
+            &prices,
+            &oracle_pubkeys,
+            &fiat_token_key.pubkey(),
+            &user_collateral_account.pubkey(),
+            &user_fiat_account.pubkey(),
+            &synchronizer_collateral_account.pubkey(),
+            &user_key,
+            &synchronizer_key
+        ).await.unwrap_err().unwrap(),
+    );
+
+    assert_eq!(
+        TransactionError::InstructionError(0, InstructionError::Custom(8)),
+        sell_for(
+            &mut banks_client,
+            &payer,
+            &recent_blockhash,
+            2,
+            123_000_000_000,
+            1_000_000,
+            &prices,
+            &oracle_pubkeys,
+            &fiat_token_key.pubkey(),
+            &user_collateral_account.pubkey(),
+            &user_fiat_account.pubkey(),
+            &synchronizer_collateral_account.pubkey(),
+            &user_key,
+            &synchronizer_key
+        ).await.unwrap_err().unwrap(),
+    );
+
+    // Case: Change minimum required signatures
+    set_collateral_token(&mut banks_client, &payer, &recent_blockhash, &collateral_token_key.pubkey(), &synchronizer_key).await.unwrap();
+    set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 5, &synchronizer_key).await.unwrap();
+
+    assert_eq!(
+        TransactionError::InstructionError(0, InstructionError::Custom(5)),
+        buy_for(
+            &mut banks_client,
+            &payer,
+            &recent_blockhash,
+            2,
+            124_000_000_000,
+            1_000_000,
+            &prices,
+            &oracle_pubkeys,
+            &fiat_token_key.pubkey(),
+            &user_collateral_account.pubkey(),
+            &user_fiat_account.pubkey(),
+            &synchronizer_collateral_account.pubkey(),
+            &user_key,
+            &synchronizer_key
+        ).await.unwrap_err().unwrap(),
+    );
+
+    assert_eq!(
+        TransactionError::InstructionError(0, InstructionError::Custom(5)),
+        sell_for(
+            &mut banks_client,
+            &payer,
+            &recent_blockhash,
+            2,
+            124_000_000_000,
+            1_000_000,
+            &prices,
+            &oracle_pubkeys,
+            &fiat_token_key.pubkey(),
+            &user_collateral_account.pubkey(),
+            &user_fiat_account.pubkey(),
+            &synchronizer_collateral_account.pubkey(),
+            &user_key,
+            &synchronizer_key
+        ).await.unwrap_err().unwrap(),
+    );
 
     // TODO: check bad access
 }
