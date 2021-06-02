@@ -4,6 +4,9 @@ use crate::{error::SynchronizerError, processor::check_program_account};
 use solana_program::{instruction::{AccountMeta, Instruction}, program_error::ProgramError, pubkey::Pubkey, sysvar};
 use std::{mem::size_of, convert::TryInto};
 
+/// Maximum oracles authorities
+pub const MAX_ORACLES: usize = 10;
+
 #[repr(C)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum SynchronizerInstruction {
@@ -18,12 +21,12 @@ pub enum SynchronizerInstruction {
     // 4. [signer] The user pubkey authority
     // 5. [writable, signer] The Synchronizer account authority
     // 6. [] Token program
+    // 7+N. [] Oracles authority
     BuyFor {
         multiplier: u64,
         amount: u64,
         fee: u64,
         prices: Vec<u64>,
-        oracles: Vec<Pubkey>,
     },
 
     // User sells fiat assets for collateral tokens
@@ -35,12 +38,12 @@ pub enum SynchronizerInstruction {
     // 4. [signer] The user pubkey authority
     // 5. [writable, signer] The Synchronizer account authority
     // 6. [] Token program
+    // 7+N. [] Oracles authority
     SellFor {
         multiplier: u64,
         amount: u64,
         fee: u64,
         prices: Vec<u64>,
-        oracles: Vec<Pubkey>,
     },
 
     // Admin Instructions
@@ -53,6 +56,7 @@ pub enum SynchronizerInstruction {
         remaining_dollar_cap: u64,
         withdrawable_fee_amount: u64,
         minimum_required_signature: u64,
+        oracles: Vec<Pubkey>,
     },
 
     // Set minimum required signature
@@ -129,7 +133,7 @@ impl SynchronizerInstruction {
 
                 let (&prices_num, rest) = rest.split_first().ok_or(InvalidInstruction)?;
                 let mut prices = Vec::with_capacity(prices_num as usize);
-                let (price_slice, rest) = rest.split_at(prices_num as usize * 8);
+                let (price_slice, _rest) = rest.split_at(prices_num as usize * 8);
                 for i in 0..prices_num {
                     let price = price_slice
                         .get(i as usize * 8 .. i as usize * 8 + 8)
@@ -139,19 +143,9 @@ impl SynchronizerInstruction {
                     prices.push(price);
                 }
 
-                let (&oracles_num, rest) = rest.split_first().ok_or(InvalidInstruction)?;
-                let mut oracles = Vec::with_capacity(oracles_num as usize);
-                let (oracles_slice, _rest) = rest.split_at(oracles_num as usize * 32);
-                for i in 0..oracles_num {
-                    // let (oracle, oracles_slice) = Self::unpack_pubkey(oracles_slice).unwrap();
-                    let oracle = oracles_slice.get(i as usize * 32 .. i as usize * 32 + 32).unwrap();
-                    let (oracle, _) = Self::unpack_pubkey(oracle).unwrap();
-                    oracles.push(oracle);
-                }
-
                 match tag {
-                    0 => Self::BuyFor {multiplier, amount, fee, prices, oracles},
-                    1 => Self::SellFor {multiplier, amount, fee, prices, oracles},
+                    0 => Self::BuyFor {multiplier, amount, fee, prices},
+                    1 => Self::SellFor {multiplier, amount, fee, prices},
                     _ => unreachable!(),
                 }
             }
@@ -172,18 +166,28 @@ impl SynchronizerInstruction {
                     .map(u64::from_le_bytes)
                     .ok_or(InvalidInstruction)?;
 
-                let (minimum_required_signature, _rest) = rest.split_at(8);
+                let (minimum_required_signature, rest) = rest.split_at(8);
                 let minimum_required_signature = minimum_required_signature
                     .try_into()
                     .ok()
                     .map(u64::from_le_bytes)
                     .ok_or(InvalidInstruction)?;
 
+                let (&oracles_num, rest) = rest.split_first().ok_or(InvalidInstruction)?;
+                let mut oracles = Vec::with_capacity(oracles_num as usize);
+                let (oracles_slice, _rest) = rest.split_at(oracles_num as usize * 32);
+                for i in 0..oracles_num {
+                    let oracle = oracles_slice.get(i as usize * 32 .. i as usize * 32 + 32).unwrap();
+                    let (oracle, _) = Self::unpack_pubkey(oracle).unwrap();
+                    oracles.push(oracle);
+                }
+
                 Self::InitializeSynchronizerAccount {
                     collateral_token_key,
                     remaining_dollar_cap,
                     withdrawable_fee_amount,
-                    minimum_required_signature
+                    minimum_required_signature,
+                    oracles
                 }
             }
 
@@ -261,7 +265,6 @@ impl SynchronizerInstruction {
                 amount,
                 fee,
                 ref prices,
-                ref oracles
             } => {
                 buf.push(0);
                 buf.extend_from_slice(&multiplier.to_le_bytes());
@@ -271,10 +274,6 @@ impl SynchronizerInstruction {
                 for price in prices {
                     buf.extend_from_slice(&price.to_le_bytes());
                 }
-                buf.push(oracles.len().try_into().unwrap());
-                for key in oracles {
-                    buf.extend_from_slice(key.as_ref());
-                }
             },
 
             Self::SellFor {
@@ -282,7 +281,6 @@ impl SynchronizerInstruction {
                 amount,
                 fee,
                 ref prices,
-                ref oracles
             } => {
                 buf.push(1);
                 buf.extend_from_slice(&multiplier.to_le_bytes());
@@ -292,10 +290,6 @@ impl SynchronizerInstruction {
                 for price in prices {
                     buf.extend_from_slice(&price.to_le_bytes());
                 }
-                buf.push(oracles.len().try_into().unwrap());
-                for key in oracles {
-                    buf.extend_from_slice(key.as_ref());
-                }
             },
 
             // Admin Instructions
@@ -304,12 +298,17 @@ impl SynchronizerInstruction {
                 remaining_dollar_cap,
                 withdrawable_fee_amount,
                 minimum_required_signature,
+                oracles
             } => {
                 buf.push(2);
                 buf.extend_from_slice(collateral_token_key.as_ref());
                 buf.extend_from_slice(&remaining_dollar_cap.to_le_bytes());
                 buf.extend_from_slice(&withdrawable_fee_amount.to_le_bytes());
                 buf.extend_from_slice(&minimum_required_signature.to_le_bytes());
+                buf.push(oracles.len().try_into().unwrap());
+                for oracle in oracles {
+                    buf.extend_from_slice(oracle.as_ref());
+                }
             }
 
             Self::SetMinimumRequiredSignature {
@@ -381,7 +380,6 @@ pub fn buy_for(
         amount,
         fee,
         multiplier,
-        oracles: oracles.iter().cloned().collect(),
         prices: prices.iter().cloned().collect(),
     }.pack();
 
@@ -393,6 +391,9 @@ pub fn buy_for(
     accounts.push(AccountMeta::new_readonly(*user_authority, true));
     accounts.push(AccountMeta::new(*synchronizer_authority, true));
     accounts.push(AccountMeta::new_readonly(spl_token::id(), false));
+    for oracle in oracles {
+        accounts.push(AccountMeta::new_readonly(*oracle, true));
+    }
 
     Ok(Instruction {
         program_id: *program_id,
@@ -421,7 +422,6 @@ pub fn sell_for(
         amount,
         fee,
         multiplier,
-        oracles: oracles.iter().cloned().collect(),
         prices: prices.iter().cloned().collect(),
     }.pack();
 
@@ -433,6 +433,9 @@ pub fn sell_for(
     accounts.push(AccountMeta::new_readonly(*user_authority, true));
     accounts.push(AccountMeta::new(*synchronizer_authority, true));
     accounts.push(AccountMeta::new_readonly(spl_token::id(), false));
+    for oracle in oracles {
+        accounts.push(AccountMeta::new_readonly(*oracle, true));
+    }
 
     Ok(Instruction {
         program_id: *program_id,
@@ -448,6 +451,7 @@ pub fn initialize_synchronizer_account(
     remaining_dollar_cap: u64,
     withdrawable_fee_amount: u64,
     minimum_required_signature: u64,
+    oracles: &Vec<Pubkey>,
     synchronizer_authority: &Pubkey,
 ) -> Result<Instruction, ProgramError> {
     check_program_account(program_id)?;
@@ -456,6 +460,7 @@ pub fn initialize_synchronizer_account(
         remaining_dollar_cap,
         withdrawable_fee_amount,
         minimum_required_signature,
+        oracles: oracles.iter().cloned().collect(),
     }.pack();
 
     let mut accounts = Vec::with_capacity(2);
@@ -587,10 +592,6 @@ mod test {
             amount: 215,
             fee: 100,
             prices: vec![211, 123, 300],
-            oracles: vec![
-                Pubkey::from_str("D2YHis8gk2wRHkMEY7bULLsFUk277KdodWFR1nJ9SRgb").unwrap(),
-                Pubkey::from_str("EExYKmkDnS5HuUhb33e5ZeGHdZPCdQKJcQXDQTyWSb4X").unwrap()
-            ]
         };
         let packed = check.pack();
         let mut expect = Vec::from([0u8]);
@@ -601,9 +602,6 @@ mod test {
         expect.extend_from_slice(&[211, 0, 0, 0, 0, 0, 0, 0]);
         expect.extend_from_slice(&[123, 0, 0, 0, 0, 0, 0, 0]);
         expect.extend_from_slice(&[44, 1, 0, 0, 0, 0, 0, 0]);
-        expect.extend_from_slice(&[2]);
-        expect.extend_from_slice(&[178, 177, 51, 164, 92, 30, 126, 138, 210, 146, 214, 193, 145, 103, 57, 185, 60, 120, 46, 119, 37, 184, 251, 108, 93, 90, 88, 249, 49, 176, 59, 160]);
-        expect.extend_from_slice(&[196, 187, 71, 168, 43, 226, 204, 130, 198, 182, 91, 6, 240, 228, 232, 228, 89, 217, 65, 173, 197, 180, 93, 22, 141, 243, 103, 79, 210, 0, 211, 76]);
         assert_eq!(packed, expect);
         let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
         assert_eq!(unpacked, check);
@@ -613,10 +611,6 @@ mod test {
             amount: 215,
             fee: 100,
             prices: vec![211, 123, 300],
-            oracles: vec![
-                Pubkey::from_str("D2YHis8gk2wRHkMEY7bULLsFUk277KdodWFR1nJ9SRgb").unwrap(),
-                Pubkey::from_str("EExYKmkDnS5HuUhb33e5ZeGHdZPCdQKJcQXDQTyWSb4X").unwrap()
-            ]
         };
         let packed = check.pack();
         let mut expect = Vec::from([1u8]);
@@ -627,9 +621,6 @@ mod test {
         expect.extend_from_slice(&[211, 0, 0, 0, 0, 0, 0, 0]);
         expect.extend_from_slice(&[123, 0, 0, 0, 0, 0, 0, 0]);
         expect.extend_from_slice(&[44, 1, 0, 0, 0, 0, 0, 0]);
-        expect.extend_from_slice(&[2]);
-        expect.extend_from_slice(&[178, 177, 51, 164, 92, 30, 126, 138, 210, 146, 214, 193, 145, 103, 57, 185, 60, 120, 46, 119, 37, 184, 251, 108, 93, 90, 88, 249, 49, 176, 59, 160]);
-        expect.extend_from_slice(&[196, 187, 71, 168, 43, 226, 204, 130, 198, 182, 91, 6, 240, 228, 232, 228, 89, 217, 65, 173, 197, 180, 93, 22, 141, 243, 103, 79, 210, 0, 211, 76]);
         assert_eq!(packed, expect);
         let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
         assert_eq!(unpacked, check);
@@ -639,6 +630,10 @@ mod test {
             remaining_dollar_cap: 300,
             withdrawable_fee_amount: 200,
             minimum_required_signature: 3,
+            oracles: vec![
+                Pubkey::from_str("D2YHis8gk2wRHkMEY7bULLsFUk277KdodWFR1nJ9SRgb").unwrap(),
+                Pubkey::from_str("EExYKmkDnS5HuUhb33e5ZeGHdZPCdQKJcQXDQTyWSb4X").unwrap()
+            ],
         };
         let packed = check.pack();
         let mut expect = Vec::from([2u8]);
@@ -646,6 +641,10 @@ mod test {
         expect.extend_from_slice(&[44, 1, 0, 0, 0, 0, 0, 0]);
         expect.extend_from_slice(&[200, 0, 0, 0, 0, 0, 0, 0]);
         expect.extend_from_slice(&[3, 0, 0, 0, 0, 0, 0, 0]);
+        expect.extend_from_slice(&[2]);
+        expect.extend_from_slice(&[178, 177, 51, 164, 92, 30, 126, 138, 210, 146, 214, 193, 145, 103, 57, 185, 60, 120, 46, 119, 37, 184, 251, 108, 93, 90, 88, 249, 49, 176, 59, 160]);
+        expect.extend_from_slice(&[196, 187, 71, 168, 43, 226, 204, 130, 198, 182, 91, 6, 240, 228, 232, 228, 89, 217, 65, 173, 197, 180, 93, 22, 141, 243, 103, 79, 210, 0, 211, 76]);
+
         assert_eq!(packed, expect);
         let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
         assert_eq!(unpacked, check);

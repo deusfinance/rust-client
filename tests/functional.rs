@@ -105,6 +105,7 @@ async fn initialize_synchronizer_account(
     remaining_dollar_cap: u64,
     withdrawable_fee_amount: u64,
     minimum_required_signature: u64,
+    oracles: &Vec<Pubkey>,
     synchronizer_account: &Keypair,
 ) -> Result<(), TransportError> {
     let mut transaction = Transaction::new_with_payer(
@@ -122,12 +123,15 @@ async fn initialize_synchronizer_account(
                 remaining_dollar_cap,
                 withdrawable_fee_amount,
                 minimum_required_signature,
+                &oracles,
                 &synchronizer_account.pubkey(),
             )
             .unwrap()
         ],
         Some(&payer.pubkey()),
     );
+
+    let keypairs = [payer, synchronizer_account];
     transaction.sign(&[payer, synchronizer_account], *recent_blockhash);
     banks_client.process_transaction(transaction).await?;
     Ok(())
@@ -299,7 +303,7 @@ async fn buy_for(
     amount: u64,
     fee: u64,
     prices: &Vec<u64>,
-    oracles: &Vec<Pubkey>,
+    oracles: &Vec<&Keypair>,
     fiat_mint: &Pubkey,
     user_collateral_token_account: &Pubkey,
     user_fiat_token_account: &Pubkey,
@@ -307,6 +311,7 @@ async fn buy_for(
     user_authority: &Keypair,
     synchronizer_authority: &Keypair,
 ) -> Result<(), TransportError> {
+    let oracles_pubkeys: Vec<Pubkey> = oracles.iter().map(|k| k.pubkey()).collect();
     let mut transaction = Transaction::new_with_payer(
         &[synchronizer::instruction::buy_for(
                 &id(),
@@ -314,7 +319,7 @@ async fn buy_for(
                 amount,
                 fee,
                 &prices,
-                &oracles,
+                &oracles_pubkeys,
                 fiat_mint,
                 user_collateral_token_account,
                 user_fiat_token_account,
@@ -326,7 +331,8 @@ async fn buy_for(
         ],
         Some(&payer.pubkey()),
     );
-    transaction.sign(&[payer, user_authority, synchronizer_authority], *recent_blockhash);
+    // TODO: there is 5 signers maximum
+    transaction.sign(&[payer, user_authority, synchronizer_authority, oracles[0], oracles[1]], *recent_blockhash);
     banks_client.process_transaction(transaction).await?;
     Ok(())
 }
@@ -470,7 +476,7 @@ async fn test_synchronizer_public_api() {
         Keypair::new(),
         Keypair::new(),
     ];
-    let oracle_pubkeys: Vec<Pubkey> = oracles.iter().map(|k| k.pubkey()).collect();
+    let oracles_pubkeys: Vec<Pubkey> = oracles.iter().map(|k| k.pubkey()).collect();
 
     // Initialize Synchronizer account
     initialize_synchronizer_account(
@@ -482,6 +488,7 @@ async fn test_synchronizer_public_api() {
         synchronizer_collateral_balance,
         0,
         oracles.len() as u64,
+        &oracles_pubkeys,
         &synchronizer_key
     ).await.unwrap();
 
@@ -513,7 +520,7 @@ async fn test_synchronizer_public_api() {
         buy_fiat_amount,
         fee,
         &prices,
-        &oracle_pubkeys,
+        &oracles,
         &fiat_token_key.pubkey(),
         &user_collateral_account.pubkey(),
         &user_fiat_account.pubkey(),
@@ -937,6 +944,7 @@ async fn test_synchronizer_admin_setters() {
         Keypair::new(),
         Keypair::new(),
     ];
+    let oracles_pubkeys = oracles.iter().map(|k| k.pubkey()).collect();
 
     initialize_synchronizer_account(
         &mut banks_client,
@@ -947,6 +955,7 @@ async fn test_synchronizer_admin_setters() {
         remaining_dollar_cap,
         withdrawable_fee_amount,
         oracles.len() as u64,
+        &oracles_pubkeys,
         &synchronizer_key
     ).await.unwrap();
 
@@ -1045,6 +1054,7 @@ async fn test_synchronizer_admin_setters() {
                 remaining_dollar_cap,
                 withdrawable_fee_amount,
                 oracles.len() as u64,
+                &oracles_pubkeys,
                 &fake_synchronizer_key.pubkey(),
             )
             .unwrap(),
@@ -1155,6 +1165,7 @@ async fn test_synchronizer_withdraw() {
         Keypair::new(),
         Keypair::new(),
     ];
+    let oracles_pubkeys = oracles.iter().map(|k| k.pubkey()).collect();
 
     initialize_synchronizer_account(
         &mut banks_client,
@@ -1165,6 +1176,7 @@ async fn test_synchronizer_withdraw() {
         spl_token::ui_amount_to_amount(500.0, decimals),
         spl_token::ui_amount_to_amount(250.0, decimals),
         oracles.len() as u64,
+        &oracles_pubkeys,
         &synchronizer_key
     ).await.unwrap();
 

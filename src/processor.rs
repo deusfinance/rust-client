@@ -31,7 +31,6 @@ pub fn process_buy_for(
     amount: u64,
     fee: u64,
     prices: &Vec<u64>,
-    oracles: &Vec<Pubkey>
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let fiat_asset_mint_info = next_account_info(account_info_iter)?;
@@ -58,7 +57,8 @@ pub fn process_buy_for(
     }
 
     // TODO: turn oracles into accounts list
-    if oracles.len() < synchronizer.minimum_required_signature as usize {
+    let oracles_infos = account_info_iter.as_slice();
+    if oracles_infos.len() < synchronizer.minimum_required_signature as usize {
         return Err(SynchronizerError::NotEnoughOracles.into());
     }
     if prices.len() < synchronizer.minimum_required_signature as usize {
@@ -67,9 +67,10 @@ pub fn process_buy_for(
 
     let mut price = prices[0];
     for i in 0..synchronizer.minimum_required_signature as usize {
-        // if !Self::oracle_keys().contains(&oracles[i]) {
-        //     return Err(SynchronizerError::BadOracle.into());
-        // }
+        let oracle = oracles_infos.iter().next().unwrap();
+        if !synchronizer.oracles.contains(&oracle.key) || !oracle.is_signer {
+            return Err(SynchronizerError::BadOracle.into());
+        }
 
         if prices[i] > price {
             price = prices[i];
@@ -173,7 +174,6 @@ pub fn process_sell_for(
     amount: u64,
     fee: u64,
     prices: &Vec<u64>,
-    oracles: &Vec<Pubkey>
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let fiat_asset_mint_info = next_account_info(account_info_iter)?;
@@ -200,7 +200,8 @@ pub fn process_sell_for(
     }
 
     // TODO: turn oracles in accounts list
-    if oracles.len() < synchronizer.minimum_required_signature as usize {
+    let oracles_infos = account_info_iter.as_slice();
+    if oracles_infos.len() < synchronizer.minimum_required_signature as usize {
         return Err(SynchronizerError::NotEnoughOracles.into());
     }
     if prices.len() < synchronizer.minimum_required_signature as usize {
@@ -209,9 +210,10 @@ pub fn process_sell_for(
 
     let mut price = prices[0];
     for i in 0..synchronizer.minimum_required_signature as usize {
-        // if !Self::oracle_keys().contains(&oracles[i]) {
-        //     return Err(SynchronizerError::BadOracle.into());
-        // }
+        let oracle = oracles_infos.iter().next().unwrap();
+        if !synchronizer.oracles.contains(&oracle.key) || !oracle.is_signer {
+            return Err(SynchronizerError::BadOracle.into());
+        }
 
         if prices[i] < price {
             price = prices[i];
@@ -308,7 +310,8 @@ pub fn process_initialize_synchronizer_account(
     collateral_token_key: Pubkey,
     remaining_dollar_cap: u64,
     withdrawable_fee_amount: u64,
-    minimum_required_signature: u64
+    minimum_required_signature: u64,
+    oracles: Vec<Pubkey>,
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let synchronizer_account_info = next_account_info(account_info_iter)?;
@@ -338,6 +341,9 @@ pub fn process_initialize_synchronizer_account(
     synchronizer.remaining_dollar_cap = remaining_dollar_cap;
     synchronizer.withdrawable_fee_amount = withdrawable_fee_amount;
     synchronizer.minimum_required_signature = minimum_required_signature;
+    for (i, oracle) in oracles.iter().enumerate() {
+        synchronizer.oracles[i] = *oracle;
+    }
 
     SynchronizerData::pack(synchronizer, &mut synchronizer_account_info.data.borrow_mut())?;
 
@@ -538,20 +544,18 @@ pub fn process_instruction(
             amount,
             fee,
             ref prices,
-            ref oracles
         } => {
             msg!("Instruction: BuyFor");
-            Self::process_buy_for(accounts, multiplier, amount, fee, prices, oracles)
+            Self::process_buy_for(accounts, multiplier, amount, fee, prices)
         }
         SynchronizerInstruction::SellFor {
             multiplier,
             amount,
             fee,
             ref prices,
-            ref oracles
         } => {
             msg!("Instruction: SellFor");
-            Self::process_sell_for(accounts, multiplier, amount, fee, prices, oracles)
+            Self::process_sell_for(accounts, multiplier, amount, fee, prices)
         }
 
         // Admin Instructions
@@ -559,10 +563,11 @@ pub fn process_instruction(
             collateral_token_key,
             remaining_dollar_cap,
             withdrawable_fee_amount,
-            minimum_required_signature
+            minimum_required_signature,
+            oracles
         } => {
             msg!("Instruction: InitializeSynchronizerAccount");
-            Self::process_initialize_synchronizer_account(accounts, collateral_token_key, remaining_dollar_cap, withdrawable_fee_amount, minimum_required_signature)
+            Self::process_initialize_synchronizer_account(accounts, collateral_token_key, remaining_dollar_cap, withdrawable_fee_amount, minimum_required_signature, oracles)
         }
 
         SynchronizerInstruction::SetMinimumRequiredSignature {
@@ -687,6 +692,7 @@ mod test {
         let mut synchronizer_account = SolanaAccount::new(init_acc_minimum_balance(), SynchronizerData::get_packed_len(), &program_id);
         let mut rent_sysvar_account = create_account_for_test(&Rent::default());
         let collateral_key = Pubkey::new_unique();
+        let oracles = vec![Pubkey::new_unique(), Pubkey::new_unique()];
 
         let mut bad_sync_acc = SolanaAccount::new(init_acc_minimum_balance() - 100, SynchronizerData::get_packed_len(), &program_id);
         assert_eq!(
@@ -698,7 +704,8 @@ mod test {
                     0,
                     0,
                     2,
-                    &synchronizer_key
+                    &oracles,
+                    &synchronizer_key,
                 ).unwrap(),
                 vec![&mut bad_sync_acc, &mut rent_sysvar_account]
             )
@@ -715,6 +722,7 @@ mod test {
                     0,
                     0,
                     2,
+                    &oracles,
                     &synchronizer_key
                 ).unwrap(),
                 vec![&mut bad_sync_acc, &mut rent_sysvar_account]
@@ -732,6 +740,7 @@ mod test {
                     0,
                     0,
                     2,
+                    &oracles,
                     &fake_sync_key
                 ).unwrap(),
                 vec![&mut fake_sync_acc, &mut rent_sysvar_account]
@@ -745,6 +754,7 @@ mod test {
                 0,
                 0,
                 2,
+                &oracles,
                 &synchronizer_key
             ).unwrap(),
             vec![&mut synchronizer_account, &mut rent_sysvar_account]
@@ -759,6 +769,7 @@ mod test {
                     0,
                     0,
                     2,
+                    &oracles,
                     &synchronizer_key
                 ).unwrap(),
                 vec![&mut synchronizer_account, &mut rent_sysvar_account]
@@ -775,6 +786,8 @@ mod test {
         let mut spl_token_account = SolanaAccount::default();
         let collateral_key = Pubkey::new_unique();
         let oracles = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+        let mut oracle1_acc = SolanaAccount::default();
+        let mut oracle2_acc = SolanaAccount::default();
         let user_key = Pubkey::new_unique();
         let mut user_account = SolanaAccount::default();
 
@@ -862,6 +875,7 @@ mod test {
                 spl_token::ui_amount_to_amount(500.0, decimals),
                 0,
                 oracles.len() as u64,
+                &oracles,
                 &synchronizer_key
             ).unwrap(),
             vec![&mut synchronizer_account, &mut rent_sysvar]
@@ -906,6 +920,38 @@ mod test {
                     &mut user_account,
                     &mut fake_synchronizer_account,
                     &mut spl_token_account,
+                    &mut oracle1_acc,
+                    &mut oracle2_acc,
+                ]
+            )
+        );
+
+        assert_eq!(
+            Err(SynchronizerError::NotEnoughOracles.into()),
+            do_process(
+                crate::instruction::sell_for(
+                    program_id,
+                    mul_stocks,
+                    sell_fiat_amount,
+                    fee,
+                    &prices,
+                    &oracles,
+                    &fiat_asset_key,
+                    &user_collateral_key,
+                    &user_fiat_key,
+                    &synchronizer_collateral_key,
+                    &user_key,
+                    &synchronizer_key
+                ).unwrap(),
+                vec![
+                    &mut fiat_asset_mint,
+                    &mut user_collateral_account,
+                    &mut user_fiat_account,
+                    &mut synchronizer_collateral_account,
+                    &mut user_account,
+                    &mut synchronizer_account,
+                    &mut spl_token_account,
+                    &mut oracle1_acc,
                 ]
             )
         );
@@ -942,6 +988,8 @@ mod test {
                 &mut user_account,
                 &mut synchronizer_account,
                 &mut spl_token_account,
+                &mut oracle1_acc,
+                &mut oracle2_acc,
             ]
         ).unwrap();
 
@@ -975,6 +1023,38 @@ mod test {
                     &mut user_account,
                     &mut fake_synchronizer_account,
                     &mut spl_token_account,
+                    &mut oracle1_acc,
+                    &mut oracle2_acc,
+                ]
+            )
+        );
+
+        assert_eq!(
+            Err(SynchronizerError::NotEnoughOracles.into()),
+            do_process(
+                crate::instruction::buy_for(
+                    program_id,
+                    mul_stocks,
+                    buy_fiat_amount,
+                    fee,
+                    &prices,
+                    &oracles,
+                    &fiat_asset_key,
+                    &user_collateral_key,
+                    &user_fiat_key,
+                    &synchronizer_collateral_key,
+                    &user_key,
+                    &synchronizer_key
+                ).unwrap(),
+                vec![
+                    &mut fiat_asset_mint,
+                    &mut user_collateral_account,
+                    &mut user_fiat_account,
+                    &mut synchronizer_collateral_account,
+                    &mut user_account,
+                    &mut synchronizer_account,
+                    &mut spl_token_account,
+                    &mut oracle1_acc,
                 ]
             )
         );
@@ -1007,6 +1087,8 @@ mod test {
                 &mut user_account,
                 &mut synchronizer_account,
                 &mut spl_token_account,
+                &mut oracle1_acc,
+                &mut oracle2_acc,
             ]
         ).unwrap();
 
@@ -1037,6 +1119,8 @@ mod test {
                     &mut user_account,
                     &mut synchronizer_account,
                     &mut spl_token_account,
+                    &mut oracle1_acc,
+                    &mut oracle2_acc,
                 ]
             )
         );
@@ -1068,9 +1152,78 @@ mod test {
                     &mut user_account,
                     &mut synchronizer_account,
                     &mut spl_token_account,
+                    &mut oracle1_acc,
+                    &mut oracle2_acc,
                 ]
             )
         );
+
+        //TODO:
+        // BadCase: wrong oracles
+        let oracles = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+        assert_eq!(
+            Err(SynchronizerError::BadOracle.into()),
+            do_process(
+                crate::instruction::sell_for(
+                    program_id,
+                    mul_stocks,
+                    sell_fiat_amount,
+                    fee,
+                    &prices,
+                    &oracles,
+                    &fiat_asset_key,
+                    &user_collateral_key,
+                    &user_fiat_key,
+                    &synchronizer_collateral_key,
+                    &user_key,
+                    &synchronizer_key
+                ).unwrap(),
+                vec![
+                    &mut fiat_asset_mint,
+                    &mut user_collateral_account,
+                    &mut user_fiat_account,
+                    &mut synchronizer_collateral_account,
+                    &mut user_account,
+                    &mut synchronizer_account,
+                    &mut spl_token_account,
+                    &mut oracle1_acc,
+                    &mut oracle2_acc,
+                ]
+            )
+        );
+
+        assert_eq!(
+            Err(SynchronizerError::BadOracle.into()),
+            do_process(
+                crate::instruction::buy_for(
+                    program_id,
+                    mul_stocks,
+                    buy_fiat_amount,
+                    fee,
+                    &prices,
+                    &oracles,
+                    &fiat_asset_key,
+                    &user_collateral_key,
+                    &user_fiat_key,
+                    &synchronizer_collateral_key,
+                    &user_key,
+                    &synchronizer_key
+                ).unwrap(),
+                vec![
+                    &mut fiat_asset_mint,
+                    &mut user_collateral_account,
+                    &mut user_fiat_account,
+                    &mut synchronizer_collateral_account,
+                    &mut user_account,
+                    &mut synchronizer_account,
+                    &mut spl_token_account,
+                    &mut oracle1_acc,
+                    &mut oracle2_acc,
+                ]
+            )
+        );
+
+        // TODO: set_oracles_intruction needed
     }
 
     #[test]
@@ -1137,6 +1290,7 @@ mod test {
                 start_remaining_dollar_cap,
                 start_minimum_required_signature,
                 oracles.len() as u64,
+                &oracles,
                 &synchronizer_key
             ).unwrap(),
             vec![&mut synchronizer_account, &mut rent_sysvar_account]
@@ -1240,6 +1394,7 @@ mod test {
                 spl_token::ui_amount_to_amount(500.0, decimals),
                 spl_token::ui_amount_to_amount(250.0, decimals),
                 oracles.len() as u64,
+                &oracles,
                 &synchronizer_key
             ).unwrap(),
             vec![&mut synchronizer_account, &mut rent_sysvar]
