@@ -81,6 +81,9 @@ pub fn process_buy_for(
     if !synchronizer_collateral_account.mint.eq(&synchronizer.collateral_token_key) {
         return Err(SynchronizerError::BadCollateralMint.into());
     }
+    if !synchronizer_collateral_account.owner.eq(synchronizer_authority_info.key) {
+        return Err(TokenError::OwnerMismatch.into());
+    }
     if !user_collateral_account.mint.eq(&synchronizer.collateral_token_key) {
         return Err(SynchronizerError::BadCollateralMint.into());
     }
@@ -222,6 +225,9 @@ pub fn process_sell_for(
     }
     if !user_collateral_account.mint.eq(&synchronizer.collateral_token_key) {
         return Err(SynchronizerError::BadCollateralMint.into());
+    }
+    if !synchronizer_collateral_account.owner.eq(synchronizer_authority_info.key) {
+        return Err(TokenError::OwnerMismatch.into());
     }
     if !user_collateral_account.owner.eq(user_authority_info.key) {
         return Err(TokenError::OwnerMismatch.into());
