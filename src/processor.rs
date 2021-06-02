@@ -340,6 +340,7 @@ pub fn process_set_minimum_required_signature(
         return Err(SynchronizerError::NotInitialized.into());
     }
 
+    msg!("Set minimum required signature {}", minimum_required_signature);
     synchronizer.minimum_required_signature = minimum_required_signature;
     SynchronizerData::pack(synchronizer, &mut synchronizer_account_info.data.borrow_mut())?;
 
@@ -366,6 +367,7 @@ pub fn process_set_collateral_token(
         return Err(SynchronizerError::NotInitialized.into());
     }
 
+    msg!("Set collateral token key {}", collateral_token_key);
     synchronizer.collateral_token_key = collateral_token_key;
     SynchronizerData::pack(synchronizer, &mut synchronizer_account_info.data.borrow_mut())?;
 
@@ -392,6 +394,7 @@ pub fn process_set_remaining_dollar_cap(
         return Err(SynchronizerError::NotInitialized.into());
     }
 
+    msg!("Set remaining dollar cap {}", remaining_dollar_cap);
     synchronizer.remaining_dollar_cap = remaining_dollar_cap;
     SynchronizerData::pack(synchronizer, &mut synchronizer_account_info.data.borrow_mut())?;
 

@@ -1,7 +1,7 @@
-use solana_program::{hash::Hash, program_pack::Pack, system_instruction};
+use solana_program::{hash::Hash, instruction::InstructionError, program_pack::Pack, system_instruction};
 use synchronizer::{processor::Processor, processor::id, state::SynchronizerData};
 use solana_program_test::*;
-use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer, transaction::Transaction, transport::TransportError};
+use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::{Signer, SignerError}, transaction::{Transaction, TransactionError}, transport::TransportError};
 
 async fn create_mint(
     banks_client: &mut BanksClient,
@@ -174,6 +174,72 @@ async fn withdraw_collateral(
                 amount,
                 &synchronizer_collateral_token_account,
                 &recipient_collateral_token_account,
+                &synchronizer_authority.pubkey(),
+            )
+            .unwrap()
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[payer, synchronizer_authority], *recent_blockhash);
+    banks_client.process_transaction(transaction).await?;
+    Ok(())
+}
+
+async fn set_collateral_token(
+    banks_client: &mut BanksClient,
+    payer: &Keypair,
+    recent_blockhash: &Hash,
+    collateral_token_key: &Pubkey,
+    synchronizer_authority: &Keypair,
+) -> Result<(), TransportError> {
+    let mut transaction = Transaction::new_with_payer(
+        &[synchronizer::instruction::set_collateral_token(
+                &id(),
+                collateral_token_key,
+                &synchronizer_authority.pubkey(),
+            )
+            .unwrap()
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[payer, synchronizer_authority], *recent_blockhash);
+    banks_client.process_transaction(transaction).await?;
+    Ok(())
+}
+
+async fn set_remaining_dollar_cap(
+    banks_client: &mut BanksClient,
+    payer: &Keypair,
+    recent_blockhash: &Hash,
+    remaining_dollar_cap: u64,
+    synchronizer_authority: &Keypair,
+) -> Result<(), TransportError> {
+    let mut transaction = Transaction::new_with_payer(
+        &[synchronizer::instruction::set_remaining_dollar_cap(
+                &id(),
+                remaining_dollar_cap,
+                &synchronizer_authority.pubkey(),
+            )
+            .unwrap()
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[payer, synchronizer_authority], *recent_blockhash);
+    banks_client.process_transaction(transaction).await?;
+    Ok(())
+}
+
+async fn set_minimum_required_signature(
+    banks_client: &mut BanksClient,
+    payer: &Keypair,
+    recent_blockhash: &Hash,
+    minimum_required_signature: u64,
+    synchronizer_authority: &Keypair,
+) -> Result<(), TransportError> {
+    let mut transaction = Transaction::new_with_payer(
+        &[synchronizer::instruction::set_minimum_required_signature(
+                &id(),
+                minimum_required_signature,
                 &synchronizer_authority.pubkey(),
             )
             .unwrap()
@@ -437,6 +503,8 @@ async fn test_synchronizer_public_api() {
         spl_token::ui_amount_to_amount(0.4, decimals)
     ];
 
+    // TODO: check wrong collateral synchronizer token
+
     // Test buy_for instruction
     let buy_fiat_amount = spl_token::ui_amount_to_amount(200.0, decimals);
     buy_for(
@@ -526,7 +594,163 @@ async fn test_synchronizer_public_api() {
     // TODO: check bad access
 }
 
-// TODO: func test admin setters (accses)
+#[tokio::test]
+async fn test_synchronizer_admin_setters() {
+    let program_test = ProgramTest::new(
+        "synchronizer",
+        id(),
+        processor!(Processor::process_instruction),
+    );
+
+    let (mut banks_client, payer, recent_blockhash) = program_test.start().await;
+    let synchronizer_key = Keypair::new();
+    let collateral_token_key = Keypair::new();
+
+    let rent = banks_client.get_rent().await.unwrap();
+    let synchronizer_data_rent = rent.minimum_balance(SynchronizerData::LEN);
+
+    // Initialize Synchronizer account
+    let decimals = 9;
+    let remaining_dollar_cap = spl_token::ui_amount_to_amount(500.0, decimals);
+    let withdrawable_fee_amount = 0;
+    let oracles = vec![
+        Keypair::new(),
+        Keypair::new(),
+    ];
+
+    initialize_synchronizer_account(
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        synchronizer_data_rent,
+        &collateral_token_key.pubkey(),
+        remaining_dollar_cap,
+        withdrawable_fee_amount,
+        oracles.len() as u64,
+        &synchronizer_key
+    ).await.unwrap();
+
+    let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
+    assert_eq!(synchronizer.is_initialized, true);
+    assert_eq!(synchronizer.collateral_token_key, collateral_token_key.pubkey());
+    assert_eq!(synchronizer.remaining_dollar_cap, 500_000_000_000);
+    assert_eq!(synchronizer.withdrawable_fee_amount, 0);
+    assert_eq!(synchronizer.minimum_required_signature, 2);
+
+    set_remaining_dollar_cap(&mut banks_client, &payer, &recent_blockhash, 123500_000_000_000, &synchronizer_key).await.unwrap();
+    let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
+    assert_eq!(synchronizer.collateral_token_key, collateral_token_key.pubkey());
+    assert_eq!(synchronizer.remaining_dollar_cap, 123500_000_000_000);
+    assert_eq!(synchronizer.minimum_required_signature, 2);
+
+    set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 123, &synchronizer_key).await.unwrap();
+    let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
+    assert_eq!(synchronizer.collateral_token_key, collateral_token_key.pubkey());
+    assert_eq!(synchronizer.remaining_dollar_cap, 123500_000_000_000);
+    assert_eq!(synchronizer.minimum_required_signature, 123);
+
+    let new_token_key = Pubkey::new_unique();
+    set_collateral_token(&mut banks_client, &payer, &recent_blockhash, &new_token_key, &synchronizer_key).await.unwrap();
+    let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
+    assert_eq!(synchronizer.collateral_token_key, new_token_key);
+    assert_eq!(synchronizer.remaining_dollar_cap, 123500_000_000_000);
+    assert_eq!(synchronizer.minimum_required_signature, 123);
+
+    // BadCase: bad account owner
+    let badowner_synchronizer_key = Keypair::new();
+    let mut transaction = Transaction::new_with_payer(
+        &[
+            system_instruction::create_account(
+                &payer.pubkey(),
+                &badowner_synchronizer_key.pubkey(),
+                synchronizer_data_rent,
+                synchronizer::state::SynchronizerData::LEN as u64,
+                &spl_token::id(), // bad account owner
+            ),
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[&payer, &badowner_synchronizer_key], recent_blockhash);
+    banks_client.process_transaction(transaction).await.unwrap();
+
+    assert_eq!(
+        set_remaining_dollar_cap(&mut banks_client, &payer, &recent_blockhash, 250_000_000_000, &badowner_synchronizer_key).await.unwrap_err().unwrap(),
+        TransactionError::InstructionError(0, InstructionError::Custom(4))
+    );
+    assert_eq!(
+        set_collateral_token(&mut banks_client, &payer, &recent_blockhash, &Pubkey::new_unique(), &badowner_synchronizer_key).await.unwrap_err().unwrap(),
+        TransactionError::InstructionError(0, InstructionError::Custom(4))
+    );
+    assert_eq!(
+        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 123, &badowner_synchronizer_key).await.unwrap_err().unwrap(),
+        TransactionError::InstructionError(0, InstructionError::Custom(4))
+    );
+
+    // BadCase: account not initialized
+    let fake_synchronizer_key = Keypair::new();
+    let mut transaction = Transaction::new_with_payer(
+        &[
+            system_instruction::create_account(
+                &payer.pubkey(),
+                &fake_synchronizer_key.pubkey(),
+                synchronizer_data_rent,
+                synchronizer::state::SynchronizerData::LEN as u64,
+                &id(),
+            ),
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[&payer, &fake_synchronizer_key], recent_blockhash);
+    banks_client.process_transaction(transaction).await.unwrap();
+
+    assert_eq!(
+        set_remaining_dollar_cap(&mut banks_client, &payer, &recent_blockhash, 250_000_000_000, &fake_synchronizer_key).await.unwrap_err().unwrap(),
+        TransactionError::InstructionError(0, InstructionError::Custom(1))
+    );
+    assert_eq!(
+        set_collateral_token(&mut banks_client, &payer, &recent_blockhash, &Pubkey::new_unique(), &fake_synchronizer_key).await.unwrap_err().unwrap(),
+        TransactionError::InstructionError(0, InstructionError::Custom(1))
+    );
+    assert_eq!(
+        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 123, &fake_synchronizer_key).await.unwrap_err().unwrap(),
+        TransactionError::InstructionError(0, InstructionError::Custom(1))
+    );
+
+    // BadCase: bad signer
+    let mut transaction = Transaction::new_with_payer(
+        &[
+            synchronizer::instruction::initialize_synchronizer_account(
+                &id(),
+                &collateral_token_key.pubkey(),
+                remaining_dollar_cap,
+                withdrawable_fee_amount,
+                oracles.len() as u64,
+                &fake_synchronizer_key.pubkey(),
+            )
+            .unwrap(),
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[&payer, &fake_synchronizer_key], recent_blockhash);
+    banks_client.process_transaction(transaction).await.unwrap();
+
+    // Trying to update other synchronizer account
+    let mut transaction = Transaction::new_with_payer(
+        &[synchronizer::instruction::set_minimum_required_signature(
+                &id(),
+                123,
+                &synchronizer_key.pubkey(),
+            )
+            .unwrap()
+        ],
+        Some(&payer.pubkey()),
+    );
+
+    assert_eq!(
+        transaction.try_sign(&[&payer, &fake_synchronizer_key], recent_blockhash),
+        Err(SignerError::KeypairPubkeyMismatch)
+    )
+}
 
 #[tokio::test]
 async fn test_synchronizer_withdraw() {

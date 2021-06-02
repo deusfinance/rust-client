@@ -479,7 +479,7 @@ pub fn set_minimum_required_signature(
     let data = SynchronizerInstruction::SetMinimumRequiredSignature { minimum_required_signature }.pack();
 
     let mut accounts = Vec::with_capacity(1);
-    accounts.push(AccountMeta::new_readonly(*synchronizer_authority, true));
+    accounts.push(AccountMeta::new(*synchronizer_authority, true));
 
     Ok(Instruction {
         program_id: *program_id,
@@ -498,7 +498,7 @@ pub fn set_collateral_token(
     let data = SynchronizerInstruction::SetCollateralToken { collateral_token_key: *collateral_token }.pack();
 
     let mut accounts = Vec::with_capacity(1);
-    accounts.push(AccountMeta::new_readonly(*synchronizer_authority, true));
+    accounts.push(AccountMeta::new(*synchronizer_authority, true));
 
     Ok(Instruction {
         program_id: *program_id,
@@ -517,7 +517,7 @@ pub fn set_remaining_dollar_cap(
     let data = SynchronizerInstruction::SetRemainingDollarCap { remaining_dollar_cap }.pack();
 
     let mut accounts = Vec::with_capacity(1);
-    accounts.push(AccountMeta::new_readonly(*synchronizer_authority, true));
+    accounts.push(AccountMeta::new(*synchronizer_authority, true));
 
     Ok(Instruction {
         program_id: *program_id,
