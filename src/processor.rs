@@ -56,7 +56,6 @@ pub fn process_buy_for(
         return Err(SynchronizerError::NotInitialized.into());
     }
 
-    // TODO: turn oracles into accounts list
     let oracles_infos = account_info_iter.as_slice();
     if oracles_infos.len() < synchronizer.minimum_required_signature as usize {
         return Err(SynchronizerError::NotEnoughOracles.into());
@@ -199,7 +198,6 @@ pub fn process_sell_for(
         return Err(SynchronizerError::NotInitialized.into());
     }
 
-    // TODO: turn oracles in accounts list
     let oracles_infos = account_info_iter.as_slice();
     if oracles_infos.len() < synchronizer.minimum_required_signature as usize {
         return Err(SynchronizerError::NotEnoughOracles.into());
@@ -1158,7 +1156,6 @@ mod test {
             )
         );
 
-        //TODO:
         // BadCase: wrong oracles
         let oracles = vec![Pubkey::new_unique(), Pubkey::new_unique()];
         assert_eq!(

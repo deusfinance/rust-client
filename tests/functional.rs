@@ -130,8 +130,6 @@ async fn initialize_synchronizer_account(
         ],
         Some(&payer.pubkey()),
     );
-
-    let keypairs = [payer, synchronizer_account];
     transaction.sign(&[payer, synchronizer_account], *recent_blockhash);
     banks_client.process_transaction(transaction).await?;
     Ok(())
@@ -263,7 +261,7 @@ async fn sell_for(
     amount: u64,
     fee: u64,
     prices: &Vec<u64>,
-    oracles: &Vec<Pubkey>,
+    oracles: &Vec<&Keypair>,
     fiat_mint: &Pubkey,
     user_collateral_token_account: &Pubkey,
     user_fiat_token_account: &Pubkey,
@@ -271,6 +269,7 @@ async fn sell_for(
     user_authority: &Keypair,
     synchronizer_authority: &Keypair,
 ) -> Result<(), TransportError> {
+    let oracles_pubkeys: Vec<Pubkey> = oracles.iter().map(|k| k.pubkey()).collect();
     let mut transaction = Transaction::new_with_payer(
         &[synchronizer::instruction::sell_for(
                 &id(),
@@ -278,7 +277,7 @@ async fn sell_for(
                 amount,
                 fee,
                 &prices,
-                &oracles,
+                &oracles_pubkeys,
                 fiat_mint,
                 user_collateral_token_account,
                 user_fiat_token_account,
@@ -290,7 +289,7 @@ async fn sell_for(
         ],
         Some(&payer.pubkey()),
     );
-    transaction.sign(&[payer, user_authority, synchronizer_authority], *recent_blockhash);
+    transaction.sign(&[payer, user_authority, synchronizer_authority, oracles[0]], *recent_blockhash);
     banks_client.process_transaction(transaction).await?;
     Ok(())
 }
@@ -331,8 +330,7 @@ async fn buy_for(
         ],
         Some(&payer.pubkey()),
     );
-    // TODO: there is 5 signers maximum
-    transaction.sign(&[payer, user_authority, synchronizer_authority, oracles[0], oracles[1]], *recent_blockhash);
+    transaction.sign(&[payer, user_authority, synchronizer_authority, oracles[0]], *recent_blockhash);
     banks_client.process_transaction(transaction).await?;
     Ok(())
 }
@@ -472,11 +470,11 @@ async fn test_synchronizer_public_api() {
         500_000_000_000
     );
 
-    let oracles = vec![
-        Keypair::new(),
-        Keypair::new(),
-    ];
+    let oracle_1 = Keypair::new();
+    let oracle_2 = Keypair::new();
+    let oracles = vec![&oracle_1];
     let oracles_pubkeys: Vec<Pubkey> = oracles.iter().map(|k| k.pubkey()).collect();
+    let minimum_required_signature = 1;
 
     // Initialize Synchronizer account
     initialize_synchronizer_account(
@@ -487,15 +485,15 @@ async fn test_synchronizer_public_api() {
         &collateral_token_key.pubkey(),
         synchronizer_collateral_balance,
         0,
-        oracles.len() as u64,
-        &oracles_pubkeys,
+        minimum_required_signature,
+        &vec![oracle_1.pubkey(), oracle_2.pubkey()],
         &synchronizer_key
     ).await.unwrap();
 
     let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
     assert_eq!(synchronizer.is_initialized, true);
     assert_eq!(synchronizer.collateral_token_key, collateral_token_key.pubkey());
-    assert_eq!(synchronizer.minimum_required_signature, 2);
+    assert_eq!(synchronizer.minimum_required_signature, 1);
     assert_eq!(synchronizer.remaining_dollar_cap, 500_000_000_000);
     assert_eq!(synchronizer.withdrawable_fee_amount, 0);
 
@@ -507,7 +505,6 @@ async fn test_synchronizer_public_api() {
     let fee = spl_token::ui_amount_to_amount(0.001, decimals);
     let prices = vec![
         spl_token::ui_amount_to_amount(0.5, decimals),
-        spl_token::ui_amount_to_amount(0.4, decimals)
     ];
 
     // Test buy_for instruction
@@ -564,7 +561,7 @@ async fn test_synchronizer_public_api() {
         sell_fiat_amount,
         fee,
         &prices,
-        &oracle_pubkeys,
+        &oracles,
         &fiat_token_key.pubkey(),
         &user_collateral_account.pubkey(),
         &user_fiat_account.pubkey(),
@@ -579,8 +576,8 @@ async fn test_synchronizer_public_api() {
         user_fiat_balance_before - sell_fiat_amount
     );
 
-    let collateral_amount: u64 = 40_000_000_000; // amount * price
-    let collateral_fee: u64 = 40_000_000; // collateral_amount * fee
+    let collateral_amount: u64 = 50_000_000_000; // amount * price
+    let collateral_fee: u64 = 50_000_000; // collateral_amount * fee
     assert_eq!(
         get_token_balance(&mut banks_client, &synchronizer_collateral_account.pubkey()).await,
         sync_collateral_balance_before - (collateral_amount - collateral_fee)
@@ -607,7 +604,7 @@ async fn test_synchronizer_public_api() {
             amount,
             1_000_000,
             &prices,
-            &oracle_pubkeys,
+            &oracles,
             &fiat_token_key.pubkey(),
             &user_collateral_account.pubkey(),
             &user_fiat_account.pubkey(),
@@ -629,7 +626,7 @@ async fn test_synchronizer_public_api() {
             amount,
             1_000_000,
             &prices,
-            &oracle_pubkeys,
+            &oracles,
             &fiat_token_key.pubkey(),
             &user_collateral_account.pubkey(),
             &user_fiat_account.pubkey(),
@@ -653,7 +650,7 @@ async fn test_synchronizer_public_api() {
             123_000_000_000,
             1_000_000,
             &prices,
-            &oracle_pubkeys,
+            &oracles,
             &fiat_token_key.pubkey(),
             &user_collateral_account.pubkey(),
             &user_fiat_account.pubkey(),
@@ -673,7 +670,7 @@ async fn test_synchronizer_public_api() {
             123_000_000_000,
             1_000_000,
             &prices,
-            &oracle_pubkeys,
+            &oracles,
             &fiat_token_key.pubkey(),
             &user_collateral_account.pubkey(),
             &user_fiat_account.pubkey(),
@@ -697,7 +694,7 @@ async fn test_synchronizer_public_api() {
             124_000_000_000,
             1_000_000,
             &prices,
-            &oracle_pubkeys,
+            &oracles,
             &fiat_token_key.pubkey(),
             &user_collateral_account.pubkey(),
             &user_fiat_account.pubkey(),
@@ -717,7 +714,7 @@ async fn test_synchronizer_public_api() {
             124_000_000_000,
             1_000_000,
             &prices,
-            &oracle_pubkeys,
+            &oracles,
             &fiat_token_key.pubkey(),
             &user_collateral_account.pubkey(),
             &user_fiat_account.pubkey(),
@@ -727,7 +724,7 @@ async fn test_synchronizer_public_api() {
         ).await.unwrap_err().unwrap(),
     );
 
-    set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 2, &synchronizer_key).await.unwrap();
+    set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 1, &synchronizer_key).await.unwrap();
 
     // Case: bad user fiat account ownership
     let fake_user_key = Keypair::new();
@@ -747,7 +744,7 @@ async fn test_synchronizer_public_api() {
                 50_000_000_000,
                 1_000_000,
                 &prices,
-                &oracle_pubkeys,
+                &oracles_pubkeys,
                 &fiat_token_key.pubkey(),
                 &user_collateral_account.pubkey(),
                 &fake_user_fiat_acc.pubkey(), // bad acc
@@ -759,7 +756,7 @@ async fn test_synchronizer_public_api() {
         ],
         Some(&payer.pubkey()),
     );
-    transaction.sign(&[&payer, &user_key, &synchronizer_key], recent_blockhash);
+    transaction.sign(&[&payer, &user_key, &synchronizer_key, oracles[0]], recent_blockhash);
 
     assert_eq!(
         TransactionError::InstructionError(0, InstructionError::Custom(4)),
@@ -774,7 +771,7 @@ async fn test_synchronizer_public_api() {
                 50_000_000_000,
                 1_000_000,
                 &prices,
-                &oracle_pubkeys,
+                &oracles_pubkeys,
                 &fiat_token_key.pubkey(),
                 &user_collateral_account.pubkey(),
                 &fake_user_fiat_acc.pubkey(), // bad acc
@@ -786,7 +783,7 @@ async fn test_synchronizer_public_api() {
         ],
         Some(&payer.pubkey()),
     );
-    transaction.sign(&[&payer, &user_key, &synchronizer_key], recent_blockhash);
+    transaction.sign(&[&payer, &user_key, &synchronizer_key, oracles[0]], recent_blockhash);
 
     assert_eq!(
         TransactionError::InstructionError(0, InstructionError::Custom(4)),
@@ -810,7 +807,7 @@ async fn test_synchronizer_public_api() {
                 51_000_000_000,
                 1_000_000,
                 &prices,
-                &oracle_pubkeys,
+                &oracles_pubkeys,
                 &fiat_token_key.pubkey(),
                 &fake_user_collateral_acc.pubkey(), // bad acc
                 &user_fiat_account.pubkey(),
@@ -822,7 +819,7 @@ async fn test_synchronizer_public_api() {
         ],
         Some(&payer.pubkey()),
     );
-    transaction.sign(&[&payer, &user_key, &synchronizer_key], recent_blockhash);
+    transaction.sign(&[&payer, &user_key, &synchronizer_key, oracles[0]], recent_blockhash);
 
     assert_eq!(
         TransactionError::InstructionError(0, InstructionError::Custom(4)),
@@ -837,7 +834,7 @@ async fn test_synchronizer_public_api() {
                 51_000_000_000,
                 1_000_000,
                 &prices,
-                &oracle_pubkeys,
+                &oracles_pubkeys,
                 &fiat_token_key.pubkey(),
                 &fake_user_collateral_acc.pubkey(), // bad acc
                 &user_fiat_account.pubkey(),
@@ -849,7 +846,7 @@ async fn test_synchronizer_public_api() {
         ],
         Some(&payer.pubkey()),
     );
-    transaction.sign(&[&payer, &user_key, &synchronizer_key], recent_blockhash);
+    transaction.sign(&[&payer, &user_key, &synchronizer_key, oracles[0]], recent_blockhash);
 
     assert_eq!(
         TransactionError::InstructionError(0, InstructionError::Custom(4)),
@@ -874,7 +871,7 @@ async fn test_synchronizer_public_api() {
                 51_000_000_000,
                 1_000_000,
                 &prices,
-                &oracle_pubkeys,
+                &oracles_pubkeys,
                 &fiat_token_key.pubkey(),
                 &user_collateral_account.pubkey(),
                 &user_fiat_account.pubkey(),
@@ -886,7 +883,7 @@ async fn test_synchronizer_public_api() {
         ],
         Some(&payer.pubkey()),
     );
-    transaction.sign(&[&payer, &user_key, &synchronizer_key], recent_blockhash);
+    transaction.sign(&[&payer, &user_key, &synchronizer_key, oracles[0]], recent_blockhash);
 
     assert_eq!(
         TransactionError::InstructionError(0, InstructionError::Custom(4)),
@@ -901,7 +898,7 @@ async fn test_synchronizer_public_api() {
                 51_000_000_000,
                 1_000_000,
                 &prices,
-                &oracle_pubkeys,
+                &oracles_pubkeys,
                 &fiat_token_key.pubkey(),
                 &user_collateral_account.pubkey(),
                 &user_fiat_account.pubkey(),
@@ -913,12 +910,70 @@ async fn test_synchronizer_public_api() {
         ],
         Some(&payer.pubkey()),
     );
-    transaction.sign(&[&payer, &user_key, &synchronizer_key], recent_blockhash);
+    transaction.sign(&[&payer, &user_key, &synchronizer_key, oracles[0]], recent_blockhash);
 
     assert_eq!(
         TransactionError::InstructionError(0, InstructionError::Custom(4)),
         banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
     );
+
+    // Case: bad oracle authority
+    let fake_oracle = Keypair::new();
+    let mut transaction = Transaction::new_with_payer(
+        &[
+            synchronizer::instruction::sell_for(
+                &id(),
+                2,
+                52_000_000_000,
+                1_000_000,
+                &prices,
+                &vec![fake_oracle.pubkey()], // bad oracle
+                &fiat_token_key.pubkey(),
+                &user_collateral_account.pubkey(),
+                &user_fiat_account.pubkey(),
+                &synchronizer_collateral_account.pubkey(),
+                &user_key.pubkey(),
+                &synchronizer_key.pubkey()
+            )
+            .unwrap(),
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[&payer, &user_key, &synchronizer_key, &fake_oracle], recent_blockhash);
+
+    assert_eq!(
+        TransactionError::InstructionError(0, InstructionError::Custom(6)),
+        banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
+    );
+
+    let mut transaction = Transaction::new_with_payer(
+        &[
+            synchronizer::instruction::buy_for(
+                &id(),
+                2,
+                52_000_000_000,
+                1_000_000,
+                &prices,
+                &vec![fake_oracle.pubkey()], // bad oracle
+                &fiat_token_key.pubkey(),
+                &user_collateral_account.pubkey(),
+                &user_fiat_account.pubkey(),
+                &synchronizer_collateral_account.pubkey(),
+                &user_key.pubkey(),
+                &synchronizer_key.pubkey()
+            )
+            .unwrap(),
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[&payer, &user_key, &synchronizer_key, &fake_oracle], recent_blockhash);
+
+    assert_eq!(
+        TransactionError::InstructionError(0, InstructionError::Custom(6)),
+        banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
+    );
+
+    // TODO: Set fake oracle as good and test
 }
 
 #[tokio::test]
@@ -965,6 +1020,8 @@ async fn test_synchronizer_admin_setters() {
     assert_eq!(synchronizer.remaining_dollar_cap, 500_000_000_000);
     assert_eq!(synchronizer.withdrawable_fee_amount, 0);
     assert_eq!(synchronizer.minimum_required_signature, 2);
+    assert_eq!(synchronizer.oracles[0], oracles_pubkeys[0]);
+    assert_eq!(synchronizer.oracles[1], oracles_pubkeys[1]);
 
     set_remaining_dollar_cap(&mut banks_client, &payer, &recent_blockhash, 123500_000_000_000, &synchronizer_key).await.unwrap();
     let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
@@ -984,6 +1041,8 @@ async fn test_synchronizer_admin_setters() {
     assert_eq!(synchronizer.collateral_token_key, new_token_key);
     assert_eq!(synchronizer.remaining_dollar_cap, 123500_000_000_000);
     assert_eq!(synchronizer.minimum_required_signature, 123);
+
+    // TODO: set oracles instruction
 
     // BadCase: bad account owner
     let badowner_synchronizer_key = Keypair::new();
