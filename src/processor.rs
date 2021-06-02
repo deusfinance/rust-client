@@ -5,7 +5,7 @@ use crate::{
 };
 use num_traits::FromPrimitive;
 use solana_program::{account_info::{next_account_info, AccountInfo}, decode_error::DecodeError, entrypoint::ProgramResult, msg, program::{invoke}, program_error::{PrintProgramError, ProgramError}, program_option::COption, program_pack::Pack, pubkey::Pubkey, rent::Rent, sysvar::Sysvar};
-use spl_token::{state::{Account, Mint}};
+use spl_token::{error::TokenError, state::{Account, Mint}};
 
 // Synchronizer program_id
 solana_program::declare_id!("8nNo8sjfYvwouTPQXw5fJ2D6DWzcWsbeXQanDGELt4AG");
@@ -42,13 +42,13 @@ pub fn process_buy_for(
     let synchronizer_authority_info = next_account_info(account_info_iter)?;
     let spl_token_info = next_account_info(account_info_iter)?;
 
-    if !user_authority_info.is_signer {
-        return Err(SynchronizerError::InvalidSigner.into());
-    }
     if !synchronizer_authority_info.owner.eq(&id()) {
         return Err(SynchronizerError::AccessDenied.into());
     }
-    if !synchronizer_authority_info.is_signer { // TODO: signer?
+    if !synchronizer_authority_info.is_signer {
+        return Err(SynchronizerError::InvalidSigner.into());
+    }
+    if !user_authority_info.is_signer {
         return Err(SynchronizerError::InvalidSigner.into());
     }
 
@@ -84,6 +84,9 @@ pub fn process_buy_for(
     if !user_collateral_account.mint.eq(&synchronizer.collateral_token_key) {
         return Err(SynchronizerError::BadCollateralMint.into());
     }
+    if !user_collateral_account.owner.eq(user_authority_info.key) {
+        return Err(TokenError::OwnerMismatch.into());
+    }
 
     let fiat_mint = Mint::unpack(&fiat_asset_mint_info.data.borrow_mut()).unwrap();
     let decimals= fiat_mint.decimals;
@@ -98,6 +101,10 @@ pub fn process_buy_for(
             }
         },
         COption::None => return Err(SynchronizerError::BadMintAuthority.into()),
+    }
+
+    if !Account::unpack(&user_fiat_account_info.data.borrow()).unwrap().owner.eq(user_authority_info.key) {
+        return Err(TokenError::OwnerMismatch.into())
     }
 
     msg!("Process buy_for, user fiat amount: {}, collateral price: {}", amount, price);
@@ -174,13 +181,13 @@ pub fn process_sell_for(
     let synchronizer_authority_info = next_account_info(account_info_iter)?;
     let spl_token_info = next_account_info(account_info_iter)?;
 
-    if !user_authority_info.is_signer {
-        return Err(SynchronizerError::InvalidSigner.into());
-    }
     if !synchronizer_authority_info.owner.eq(&id()) {
         return Err(SynchronizerError::AccessDenied.into());
     }
-    if !synchronizer_authority_info.is_signer { // TODO: signer?
+    if !synchronizer_authority_info.is_signer {
+        return Err(SynchronizerError::InvalidSigner.into());
+    }
+    if !user_authority_info.is_signer {
         return Err(SynchronizerError::InvalidSigner.into());
     }
 
@@ -216,6 +223,14 @@ pub fn process_sell_for(
     if !user_collateral_account.mint.eq(&synchronizer.collateral_token_key) {
         return Err(SynchronizerError::BadCollateralMint.into());
     }
+    if !user_collateral_account.owner.eq(user_authority_info.key) {
+        return Err(TokenError::OwnerMismatch.into());
+    }
+
+    let user_fiat_account = Account::unpack(&user_fiat_account_info.data.borrow()).unwrap();
+    if !user_fiat_account.owner.eq(user_authority_info.key) {
+        return Err(TokenError::OwnerMismatch.into());
+    }
 
     let decimals= Mint::unpack(&fiat_asset_mint_info.data.borrow_mut()).unwrap().decimals;
     if decimals != Self::DEFAULT_DECIMALS {
@@ -232,7 +247,7 @@ pub fn process_sell_for(
     let fee_amount = spl_token::ui_amount_to_amount(fee_amount_ui, decimals);
     msg!("collateral_amount: {}, fee_amount: {}", collateral_amount, fee_amount);
 
-    if Account::unpack(&user_fiat_account_info.data.borrow()).unwrap().amount < amount {
+    if user_fiat_account.amount < amount {
         return Err(SynchronizerError::InsufficientFunds.into());
     }
     if synchronizer_collateral_account.amount < (collateral_amount - fee_amount) {

@@ -720,7 +720,134 @@ async fn test_synchronizer_public_api() {
         ).await.unwrap_err().unwrap(),
     );
 
-    // TODO: check bad access
+    set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 2, &synchronizer_key).await.unwrap();
+
+    // Case: bad user fiat account ownership
+    let fake_user_key = Keypair::new();
+    let fake_user_fiat_acc = Keypair::new();
+    create_token_account(&mut banks_client, &payer, &recent_blockhash,
+        &fake_user_fiat_acc,
+        account_rent,
+        &fiat_token_key.pubkey(),
+        &fake_user_key.pubkey()
+    ).await.unwrap();
+
+    let mut transaction = Transaction::new_with_payer(
+        &[
+            synchronizer::instruction::sell_for(
+                &id(),
+                2,
+                50_000_000_000,
+                1_000_000,
+                &prices,
+                &oracle_pubkeys,
+                &fiat_token_key.pubkey(),
+                &user_collateral_account.pubkey(),
+                &fake_user_fiat_acc.pubkey(), // bad acc
+                &synchronizer_collateral_account.pubkey(),
+                &user_key.pubkey(),
+                &synchronizer_key.pubkey()
+            )
+            .unwrap(),
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[&payer, &user_key, &synchronizer_key], recent_blockhash);
+
+    assert_eq!(
+        TransactionError::InstructionError(0, InstructionError::Custom(4)),
+        banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
+    );
+
+    let mut transaction = Transaction::new_with_payer(
+        &[
+            synchronizer::instruction::buy_for(
+                &id(),
+                2,
+                50_000_000_000,
+                1_000_000,
+                &prices,
+                &oracle_pubkeys,
+                &fiat_token_key.pubkey(),
+                &user_collateral_account.pubkey(),
+                &fake_user_fiat_acc.pubkey(), // bad acc
+                &synchronizer_collateral_account.pubkey(),
+                &user_key.pubkey(),
+                &synchronizer_key.pubkey()
+            )
+            .unwrap(),
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[&payer, &user_key, &synchronizer_key], recent_blockhash);
+
+    assert_eq!(
+        TransactionError::InstructionError(0, InstructionError::Custom(4)),
+        banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
+    );
+
+    // Case: bad collateral account
+    let fake_user_collateral_acc = Keypair::new();
+    create_token_account(&mut banks_client, &payer, &recent_blockhash,
+        &fake_user_collateral_acc,
+        account_rent,
+        &collateral_token_key.pubkey(),
+        &fake_user_key.pubkey()
+    ).await.unwrap();
+
+    let mut transaction = Transaction::new_with_payer(
+        &[
+            synchronizer::instruction::sell_for(
+                &id(),
+                2,
+                51_000_000_000,
+                1_000_000,
+                &prices,
+                &oracle_pubkeys,
+                &fiat_token_key.pubkey(),
+                &fake_user_collateral_acc.pubkey(), // bad acc
+                &user_fiat_account.pubkey(),
+                &synchronizer_collateral_account.pubkey(),
+                &user_key.pubkey(),
+                &synchronizer_key.pubkey()
+            )
+            .unwrap(),
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[&payer, &user_key, &synchronizer_key], recent_blockhash);
+
+    assert_eq!(
+        TransactionError::InstructionError(0, InstructionError::Custom(4)),
+        banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
+    );
+
+    let mut transaction = Transaction::new_with_payer(
+        &[
+            synchronizer::instruction::buy_for(
+                &id(),
+                2,
+                51_000_000_000,
+                1_000_000,
+                &prices,
+                &oracle_pubkeys,
+                &fiat_token_key.pubkey(),
+                &fake_user_collateral_acc.pubkey(), // bad acc
+                &user_fiat_account.pubkey(),
+                &synchronizer_collateral_account.pubkey(),
+                &user_key.pubkey(),
+                &synchronizer_key.pubkey()
+            )
+            .unwrap(),
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[&payer, &user_key, &synchronizer_key], recent_blockhash);
+
+    assert_eq!(
+        TransactionError::InstructionError(0, InstructionError::Custom(4)),
+        banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
+    );
 }
 
 #[tokio::test]
