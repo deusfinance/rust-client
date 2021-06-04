@@ -1,8 +1,4 @@
-use crate::{
-    error::SynchronizerError,
-    instruction::{SynchronizerInstruction},
-    state::SynchronizerData
-};
+use crate::{error::SynchronizerError, instruction::{MAX_ORACLES, SynchronizerInstruction}, state::SynchronizerData};
 use num_traits::FromPrimitive;
 use solana_program::{account_info::{next_account_info, AccountInfo}, decode_error::DecodeError, entrypoint::ProgramResult, msg, program::{invoke}, program_error::{PrintProgramError, ProgramError}, program_option::COption, program_pack::Pack, pubkey::Pubkey, rent::Rent, sysvar::Sysvar};
 use spl_token::{error::TokenError, state::{Account, Mint}};
@@ -429,6 +425,39 @@ pub fn process_set_remaining_dollar_cap(
     Ok(())
 }
 
+pub fn process_set_oracles(
+    accounts: &[AccountInfo],
+    oracles: Vec<Pubkey>,
+) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let synchronizer_account_info = next_account_info(account_info_iter)?;
+
+    if !synchronizer_account_info.owner.eq(&id()) {
+        return Err(SynchronizerError::AccessDenied.into());
+    }
+
+    if !synchronizer_account_info.is_signer {
+        return Err(SynchronizerError::InvalidSigner.into());
+    }
+
+    let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
+    if !synchronizer.is_initialized {
+        return Err(SynchronizerError::NotInitialized.into());
+    }
+
+    if oracles.len() > MAX_ORACLES {
+        return Err(SynchronizerError::MaxOraclesExceed.into());
+    }
+
+    msg!("Set oracles {:?}", oracles);
+    for (i, oracle) in oracles.iter().enumerate() {
+        synchronizer.oracles[i] = *oracle;
+    }
+
+    SynchronizerData::pack(synchronizer, &mut synchronizer_account_info.data.borrow_mut())?;
+    Ok(())
+}
+
 pub fn process_withdraw_fee(
     accounts: &[AccountInfo],
     amount: u64,
@@ -582,6 +611,13 @@ pub fn process_instruction(
             Self::process_set_collateral_token(accounts, collateral_token_key)
         }
 
+        SynchronizerInstruction::SetOracles {
+            oracles
+        } => {
+            msg!("Instruction: SetOracles");
+            Self::process_set_oracles(accounts, oracles)
+        }
+
         SynchronizerInstruction::SetRemainingDollarCap {
             remaining_dollar_cap
         } => {
@@ -620,6 +656,7 @@ impl PrintProgramError for SynchronizerError {
             SynchronizerError::AccessDenied => msg!("Error: Access Denied"),
 
             SynchronizerError::NotEnoughOracles => msg!("Error: Not enough oracles"),
+            SynchronizerError::MaxOraclesExceed => msg!("Error: Exceed limit of maximum oracles"),
             SynchronizerError::BadOracle => msg!("Error: signer is not an oracle"),
             SynchronizerError::BadMintAuthority => msg!("Error: Bad mint authority"),
             SynchronizerError::BadCollateralMint => msg!("Error: Bad collateral mint"),

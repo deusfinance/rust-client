@@ -31,6 +31,8 @@ pub enum SynchronizerError {
     InvalidSigner,
     #[error("Invalid instruction")]
     InvalidInstruction,
+    #[error("Exceed limit of maximum oracles")]
+    MaxOraclesExceed,
 }
 
 impl From<SynchronizerError> for ProgramError {

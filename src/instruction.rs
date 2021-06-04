@@ -99,6 +99,13 @@ pub enum SynchronizerInstruction {
     WithdrawCollateral {
         amount: u64
     },
+
+    // Set list of known oracles
+    // Accounts expected by this instruction:
+    // 0. [writable, signer] The Synchronizer account authority
+    SetOracles {
+        oracles: Vec<Pubkey>,
+    }
 }
 
 impl SynchronizerInstruction {
@@ -251,6 +258,21 @@ impl SynchronizerInstruction {
                 }
             }
 
+            8 => {
+                let (&oracles_num, rest) = rest.split_first().ok_or(InvalidInstruction)?;
+                let mut oracles = Vec::with_capacity(oracles_num as usize);
+                let (oracles_slice, _rest) = rest.split_at(oracles_num as usize * 32);
+                for i in 0..oracles_num {
+                    let oracle = oracles_slice.get(i as usize * 32 .. i as usize * 32 + 32).unwrap();
+                    let (oracle, _) = Self::unpack_pubkey(oracle).unwrap();
+                    oracles.push(oracle);
+                }
+
+                Self::SetOracles {
+                    oracles
+                }
+            }
+
             _ => return Err(SynchronizerError::InvalidInstruction.into()),
         })
     }
@@ -345,6 +367,16 @@ impl SynchronizerInstruction {
                 buf.push(7);
                 buf.extend_from_slice(&amount.to_le_bytes());
             },
+
+            Self::SetOracles {
+                oracles
+            } => {
+                buf.push(8);
+                buf.push(oracles.len().try_into().unwrap());
+                for oracle in oracles {
+                    buf.extend_from_slice(oracle.as_ref());
+                }
+            }
         };
         buf
     }
@@ -579,6 +611,25 @@ pub fn withdraw_collateral(
     })
 }
 
+/// Craetes a `SetOracles` instruction
+pub fn set_oracles(
+    program_id: &Pubkey,
+    oracles: &Vec<Pubkey>,
+    synchronizer_authority: &Pubkey,
+) -> Result<Instruction, ProgramError> {
+    check_program_account(program_id)?;
+    let data = SynchronizerInstruction::SetOracles { oracles: oracles.iter().cloned().collect() }.pack();
+
+    let mut accounts = Vec::with_capacity(1);
+    accounts.push(AccountMeta::new(*synchronizer_authority, true));
+
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    })
+}
+
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
@@ -644,7 +695,6 @@ mod test {
         expect.extend_from_slice(&[2]);
         expect.extend_from_slice(&[178, 177, 51, 164, 92, 30, 126, 138, 210, 146, 214, 193, 145, 103, 57, 185, 60, 120, 46, 119, 37, 184, 251, 108, 93, 90, 88, 249, 49, 176, 59, 160]);
         expect.extend_from_slice(&[196, 187, 71, 168, 43, 226, 204, 130, 198, 182, 91, 6, 240, 228, 232, 228, 89, 217, 65, 173, 197, 180, 93, 22, 141, 243, 103, 79, 210, 0, 211, 76]);
-
         assert_eq!(packed, expect);
         let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
         assert_eq!(unpacked, check);
@@ -695,6 +745,27 @@ mod test {
         let packed = check.pack();
         let mut expect = Vec::from([7u8]);
         expect.extend_from_slice(&[0, 136, 82, 106, 116, 0, 0, 0]);
+        assert_eq!(packed, expect);
+        let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
+        assert_eq!(unpacked, check);
+
+        let check = SynchronizerInstruction::SetOracles {
+            oracles: vec![
+                Pubkey::from_str("D2YHis8gk2wRHkMEY7bULLsFUk277KdodWFR1nJ9SRgb").unwrap(),
+                Pubkey::from_str("EExYKmkDnS5HuUhb33e5ZeGHdZPCdQKJcQXDQTyWSb4X").unwrap(),
+                Pubkey::from_str("48KTaZpsG3ksPfxGkGByQri85LVqMMnuZF1FKdgQuFFb").unwrap(),
+                Pubkey::from_str("DUnw9uFDhmkqm6Wz4t5Z1fBYo5wNtU3FoNer4KLyRTab").unwrap(),
+                Pubkey::from_str("7kVUKpM9Tz3H5aTPgfDFdWxgyCEWcx8orax7icVm629u").unwrap()
+            ],
+        };
+        let packed = check.pack();
+        let mut expect = Vec::from([8u8]);
+        expect.extend_from_slice(&[5]);
+        expect.extend_from_slice(&[178, 177, 51, 164, 92, 30, 126, 138, 210, 146, 214, 193, 145, 103, 57, 185, 60, 120, 46, 119, 37, 184, 251, 108, 93, 90, 88, 249, 49, 176, 59, 160]);
+        expect.extend_from_slice(&[196, 187, 71, 168, 43, 226, 204, 130, 198, 182, 91, 6, 240, 228, 232, 228, 89, 217, 65, 173, 197, 180, 93, 22, 141, 243, 103, 79, 210, 0, 211, 76]);
+        expect.extend_from_slice(&[46, 114, 255, 76, 55, 224, 86, 81, 80, 77, 238, 196, 54, 34, 220, 143, 51, 146, 94, 92, 180, 213, 127, 110, 44, 152, 35, 202, 56, 105, 199, 54, 185]);
+        expect.extend_from_slice(&[106, 220, 194, 67, 146, 136, 46, 107, 170, 107, 183, 9, 110, 128, 95, 226, 235, 241, 127, 237, 200, 73, 88, 145, 62, 168, 192, 157, 143, 206, 100, 100]);
+        expect.extend_from_slice(&[74, 73, 234, 151, 55, 189, 63, 169, 31, 58, 64, 4, 192, 129, 45, 231, 221, 183, 196, 119, 148, 203, 29, 109, 186, 145, 150, 226, 24, 95, 112]);
         assert_eq!(packed, expect);
         let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
         assert_eq!(unpacked, check);
