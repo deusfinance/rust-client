@@ -1,4 +1,4 @@
-use crate::{error::SynchronizerError, instruction::{MAX_ORACLES, SynchronizerInstruction}, state::SynchronizerData};
+use crate::{error::SynchronizerError, instruction::{MAX_ORACLES, MAX_SIGNERS, SynchronizerInstruction}, state::SynchronizerData};
 use num_traits::FromPrimitive;
 use solana_program::{account_info::{next_account_info, AccountInfo}, decode_error::DecodeError, entrypoint::ProgramResult, msg, program::{invoke}, program_error::{PrintProgramError, ProgramError}, program_option::COption, program_pack::Pack, pubkey::Pubkey, rent::Rent, sysvar::Sysvar};
 use spl_token::{error::TokenError, state::{Account, Mint}};
@@ -304,7 +304,7 @@ pub fn process_initialize_synchronizer_account(
     collateral_token_key: Pubkey,
     remaining_dollar_cap: u64,
     withdrawable_fee_amount: u64,
-    minimum_required_signature: u64,
+    minimum_required_signature: u8,
     oracles: Vec<Pubkey>,
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
@@ -321,6 +321,10 @@ pub fn process_initialize_synchronizer_account(
 
     if oracles.len() > MAX_ORACLES {
         return Err(SynchronizerError::MaxOraclesExceed.into());
+    }
+
+    if minimum_required_signature > MAX_SIGNERS {
+        return Err(SynchronizerError::MaxSignersExceed.into());
     }
 
     let rent = &Rent::from_account_info(rent_account_info)?;
@@ -350,7 +354,7 @@ pub fn process_initialize_synchronizer_account(
 
 pub fn process_set_minimum_required_signature(
     accounts: &[AccountInfo],
-    minimum_required_signature: u64,
+    minimum_required_signature: u8,
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let synchronizer_account_info = next_account_info(account_info_iter)?;
@@ -363,8 +367,12 @@ pub fn process_set_minimum_required_signature(
         return Err(SynchronizerError::InvalidSigner.into());
     }
 
-    if minimum_required_signature > MAX_ORACLES as u64 {
+    if minimum_required_signature > MAX_ORACLES as u8 {
         return Err(SynchronizerError::MaxOraclesExceed.into());
+    }
+
+    if minimum_required_signature > MAX_SIGNERS {
+        return Err(SynchronizerError::MaxSignersExceed.into());
     }
 
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
@@ -668,6 +676,7 @@ impl PrintProgramError for SynchronizerError {
 
             SynchronizerError::NotEnoughOracles => msg!("Error: Not enough oracles"),
             SynchronizerError::MaxOraclesExceed => msg!("Error: Exceed limit of maximum oracles"),
+            SynchronizerError::MaxSignersExceed => msg!("Error: Exceed limit of maximum signers"),
             SynchronizerError::BadOracle => msg!("Error: signer is not an oracle"),
             SynchronizerError::BadMintAuthority => msg!("Error: Bad mint authority"),
             SynchronizerError::BadCollateralMint => msg!("Error: Bad collateral mint"),
@@ -920,7 +929,7 @@ mod test {
                 &collateral_key,
                 spl_token::ui_amount_to_amount(500.0, decimals),
                 0,
-                oracles.len() as u64,
+                oracles.len() as u8,
                 &oracles,
                 &synchronizer_key
             ).unwrap(),
@@ -1378,7 +1387,7 @@ mod test {
         assert_eq!(
             Err(SynchronizerError::NotInitialized.into()),
             do_process(
-                crate::instruction::set_minimum_required_signature(&id(), 9, &synchronizer_key).unwrap(),
+                crate::instruction::set_minimum_required_signature(&id(), 5, &synchronizer_key).unwrap(),
                 vec![&mut synchronizer_account]
             )
         );
@@ -1405,18 +1414,25 @@ mod test {
                 vec![&mut synchronizer_account]
             )
         );
+        assert_eq!(
+            Err(SynchronizerError::MaxSignersExceed.into()),
+            do_process(
+                crate::instruction::set_minimum_required_signature(&id(), 10, &synchronizer_key).unwrap(),
+                vec![&mut synchronizer_account]
+            )
+        );
 
         let start_collateral_token_key = Pubkey::new_unique();
         let oracles = vec![Pubkey::new_unique(), Pubkey::new_unique()];
         let start_remaining_dollar_cap: u64 = 10;
-        let start_minimum_required_signature: u64 = oracles.len() as u64;
+        let start_minimum_required_signature: u8 = oracles.len() as u8;
         do_process(
             crate::instruction::initialize_synchronizer_account(
                 &id(),
                 &start_collateral_token_key,
                 start_remaining_dollar_cap,
+                0,
                 start_minimum_required_signature,
-                oracles.len() as u64,
                 &oracles,
                 &synchronizer_key
             ).unwrap(),
@@ -1520,7 +1536,7 @@ mod test {
                 &collateral_token_key,
                 spl_token::ui_amount_to_amount(500.0, decimals),
                 spl_token::ui_amount_to_amount(250.0, decimals),
-                oracles.len() as u64,
+                oracles.len() as u8,
                 &oracles,
                 &synchronizer_key
             ).unwrap(),

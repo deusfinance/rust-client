@@ -4,8 +4,10 @@ use crate::{error::SynchronizerError, processor::check_program_account};
 use solana_program::{instruction::{AccountMeta, Instruction}, program_error::ProgramError, pubkey::Pubkey, sysvar};
 use std::{mem::size_of, convert::TryInto};
 
-/// Maximum oracles authorities
+/// Maximum known oracles authorities
 pub const MAX_ORACLES: usize = 10;
+/// Maximum oracles signs in transaction
+pub const MAX_SIGNERS: u8 = 5;
 
 #[repr(C)]
 #[derive(Clone, Debug, PartialEq)]
@@ -55,7 +57,7 @@ pub enum SynchronizerInstruction {
         collateral_token_key: Pubkey,
         remaining_dollar_cap: u64,
         withdrawable_fee_amount: u64,
-        minimum_required_signature: u64,
+        minimum_required_signature: u8,
         oracles: Vec<Pubkey>,
     },
 
@@ -63,7 +65,7 @@ pub enum SynchronizerInstruction {
     // Accounts expected by this instruction:
     // 0. [signer] The Synchronizer account authority
     SetMinimumRequiredSignature {
-        minimum_required_signature: u64
+        minimum_required_signature: u8
     },
 
     // Set collateral token key
@@ -173,12 +175,7 @@ impl SynchronizerInstruction {
                     .map(u64::from_le_bytes)
                     .ok_or(InvalidInstruction)?;
 
-                let (minimum_required_signature, rest) = rest.split_at(8);
-                let minimum_required_signature = minimum_required_signature
-                    .try_into()
-                    .ok()
-                    .map(u64::from_le_bytes)
-                    .ok_or(InvalidInstruction)?;
+                let (&minimum_required_signature, rest) = rest.split_first().ok_or(InvalidInstruction)?;
 
                 let (&oracles_num, rest) = rest.split_first().ok_or(InvalidInstruction)?;
                 let mut oracles = Vec::with_capacity(oracles_num as usize);
@@ -199,12 +196,7 @@ impl SynchronizerInstruction {
             }
 
             3 => {
-                let (minimum_required_signature, _rest) = rest.split_at(8);
-                let minimum_required_signature = minimum_required_signature
-                    .try_into()
-                    .ok()
-                    .map(u64::from_le_bytes)
-                    .ok_or(InvalidInstruction)?;
+                let (&minimum_required_signature, _rest) = rest.split_first().ok_or(InvalidInstruction)?;
 
                 Self::SetMinimumRequiredSignature {
                     minimum_required_signature
@@ -326,7 +318,7 @@ impl SynchronizerInstruction {
                 buf.extend_from_slice(collateral_token_key.as_ref());
                 buf.extend_from_slice(&remaining_dollar_cap.to_le_bytes());
                 buf.extend_from_slice(&withdrawable_fee_amount.to_le_bytes());
-                buf.extend_from_slice(&minimum_required_signature.to_le_bytes());
+                buf.push(*minimum_required_signature);
                 buf.push(oracles.len().try_into().unwrap());
                 for oracle in oracles {
                     buf.extend_from_slice(oracle.as_ref());
@@ -337,7 +329,7 @@ impl SynchronizerInstruction {
                 minimum_required_signature
             } => {
                 buf.push(3);
-                buf.extend_from_slice(&minimum_required_signature.to_le_bytes());
+                buf.push(*minimum_required_signature);
             },
 
             Self::SetCollateralToken {
@@ -482,7 +474,7 @@ pub fn initialize_synchronizer_account(
     collateral_token_key: &Pubkey,
     remaining_dollar_cap: u64,
     withdrawable_fee_amount: u64,
-    minimum_required_signature: u64,
+    minimum_required_signature: u8,
     oracles: &Vec<Pubkey>,
     synchronizer_authority: &Pubkey,
 ) -> Result<Instruction, ProgramError> {
@@ -509,7 +501,7 @@ pub fn initialize_synchronizer_account(
 /// Creates a `SetMinimumRequiredSignature` instruction
 pub fn set_minimum_required_signature(
     program_id: &Pubkey,
-    minimum_required_signature: u64,
+    minimum_required_signature: u8,
     synchronizer_authority: &Pubkey,
 ) -> Result<Instruction, ProgramError> {
     check_program_account(program_id)?;
@@ -691,7 +683,7 @@ mod test {
         expect.extend_from_slice(&[178, 177, 51, 164, 92, 30, 126, 138, 210, 146, 214, 193, 145, 103, 57, 185, 60, 120, 46, 119, 37, 184, 251, 108, 93, 90, 88, 249, 49, 176, 59, 160]);
         expect.extend_from_slice(&[44, 1, 0, 0, 0, 0, 0, 0]);
         expect.extend_from_slice(&[200, 0, 0, 0, 0, 0, 0, 0]);
-        expect.extend_from_slice(&[3, 0, 0, 0, 0, 0, 0, 0]);
+        expect.extend_from_slice(&[3]);
         expect.extend_from_slice(&[2]);
         expect.extend_from_slice(&[178, 177, 51, 164, 92, 30, 126, 138, 210, 146, 214, 193, 145, 103, 57, 185, 60, 120, 46, 119, 37, 184, 251, 108, 93, 90, 88, 249, 49, 176, 59, 160]);
         expect.extend_from_slice(&[196, 187, 71, 168, 43, 226, 204, 130, 198, 182, 91, 6, 240, 228, 232, 228, 89, 217, 65, 173, 197, 180, 93, 22, 141, 243, 103, 79, 210, 0, 211, 76]);
@@ -704,7 +696,7 @@ mod test {
         };
         let packed = check.pack();
         let mut expect = Vec::from([3u8]);
-        expect.extend_from_slice(&[3, 0, 0, 0, 0, 0, 0, 0]);
+        expect.extend_from_slice(&[3]);
         assert_eq!(packed, expect);
         let unpacked = SynchronizerInstruction::unpack(&expect).unwrap();
         assert_eq!(unpacked, check);

@@ -104,7 +104,7 @@ async fn initialize_synchronizer_account(
     collateral_token_key: &Pubkey,
     remaining_dollar_cap: u64,
     withdrawable_fee_amount: u64,
-    minimum_required_signature: u64,
+    minimum_required_signature: u8,
     oracles: &Vec<Pubkey>,
     synchronizer_account: &Keypair,
 ) -> Result<(), TransportError> {
@@ -235,7 +235,7 @@ async fn set_minimum_required_signature(
     banks_client: &mut BanksClient,
     payer: &Keypair,
     recent_blockhash: &Hash,
-    minimum_required_signature: u64,
+    minimum_required_signature: u8,
     synchronizer_authority: &Keypair,
 ) -> Result<(), TransportError> {
     let mut transaction = Transaction::new_with_payer(
@@ -1060,7 +1060,7 @@ async fn test_synchronizer_admin_setters() {
         &collateral_token_key.pubkey(),
         remaining_dollar_cap,
         withdrawable_fee_amount,
-        oracles.len() as u64,
+        oracles.len() as u8,
         &oracles_pubkeys,
         &synchronizer_key
     ).await.unwrap();
@@ -1080,20 +1080,25 @@ async fn test_synchronizer_admin_setters() {
     assert_eq!(synchronizer.remaining_dollar_cap, 123500_000_000_000);
     assert_eq!(synchronizer.minimum_required_signature, 2);
 
-    set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 9, &synchronizer_key).await.unwrap();
+    set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 5, &synchronizer_key).await.unwrap();
     let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
     assert_eq!(synchronizer.collateral_token_key, collateral_token_key.pubkey());
     assert_eq!(synchronizer.remaining_dollar_cap, 123500_000_000_000);
-    assert_eq!(synchronizer.minimum_required_signature, 9);
+    assert_eq!(synchronizer.minimum_required_signature, 5);
 
     let new_token_key = Pubkey::new_unique();
     set_collateral_token(&mut banks_client, &payer, &recent_blockhash, &new_token_key, &synchronizer_key).await.unwrap();
     let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
     assert_eq!(synchronizer.collateral_token_key, new_token_key);
     assert_eq!(synchronizer.remaining_dollar_cap, 123500_000_000_000);
-    assert_eq!(synchronizer.minimum_required_signature, 9);
+    assert_eq!(synchronizer.minimum_required_signature, 5);
 
     // BadCase: limit exceed
+    assert_eq!(
+        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 9, &synchronizer_key).await.unwrap_err().unwrap(),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::MaxSignersExceed as u32))
+    );
+
     let oracles = vec![
         Keypair::new(), Keypair::new(),
         Keypair::new(), Keypair::new(),
@@ -1151,7 +1156,7 @@ async fn test_synchronizer_admin_setters() {
         TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32))
     );
     assert_eq!(
-        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 9, &badowner_synchronizer_key).await.unwrap_err().unwrap(),
+        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 5, &badowner_synchronizer_key).await.unwrap_err().unwrap(),
         TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32))
     );
 
@@ -1181,7 +1186,7 @@ async fn test_synchronizer_admin_setters() {
         TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::NotInitialized as u32))
     );
     assert_eq!(
-        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 9, &fake_synchronizer_key).await.unwrap_err().unwrap(),
+        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 5, &fake_synchronizer_key).await.unwrap_err().unwrap(),
         TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::NotInitialized as u32))
     );
 
@@ -1199,7 +1204,7 @@ async fn test_synchronizer_admin_setters() {
                 &collateral_token_key.pubkey(),
                 remaining_dollar_cap,
                 withdrawable_fee_amount,
-                oracles.len() as u64,
+                5,
                 &oracles_pubkeys,
                 &fake_synchronizer_key.pubkey(),
             )
@@ -1321,7 +1326,7 @@ async fn test_synchronizer_withdraw() {
         &collateral_token_key.pubkey(),
         spl_token::ui_amount_to_amount(500.0, decimals),
         spl_token::ui_amount_to_amount(250.0, decimals),
-        oracles.len() as u64,
+        oracles.len() as u8,
         &oracles_pubkeys,
         &synchronizer_key
     ).await.unwrap();
