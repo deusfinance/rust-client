@@ -1,5 +1,5 @@
 use solana_program::{hash::Hash, instruction::InstructionError, program_pack::Pack, system_instruction};
-use synchronizer::{processor::Processor, processor::id, state::SynchronizerData};
+use synchronizer::{error::SynchronizerError, processor::Processor, processor::id, state::SynchronizerData};
 use solana_program_test::*;
 use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::{Signer, SignerError}, transaction::{Transaction, TransactionError}, transport::TransportError};
 
@@ -595,7 +595,7 @@ async fn test_synchronizer_public_api() {
     let mut amount = get_token_balance(&mut banks_client, &user_collateral_account.pubkey()).await;
     amount += spl_token::ui_amount_to_amount(500.0, decimals);
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(3)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::InsufficientFunds as u32)),
         buy_for(
             &mut banks_client,
             &payer,
@@ -617,7 +617,7 @@ async fn test_synchronizer_public_api() {
     let mut amount = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await.remaining_dollar_cap;
     amount += spl_token::ui_amount_to_amount(500.0, decimals);
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(3)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::InsufficientFunds as u32)),
         sell_for(
             &mut banks_client,
             &payer,
@@ -641,7 +641,7 @@ async fn test_synchronizer_public_api() {
     set_collateral_token(&mut banks_client, &payer, &recent_blockhash, &new_collateral_token_key.pubkey(), &synchronizer_key).await.unwrap();
 
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(8)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::BadCollateralMint as u32)),
         buy_for(
             &mut banks_client,
             &payer,
@@ -661,7 +661,7 @@ async fn test_synchronizer_public_api() {
     );
 
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(8)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::BadCollateralMint as u32)),
         sell_for(
             &mut banks_client,
             &payer,
@@ -685,7 +685,7 @@ async fn test_synchronizer_public_api() {
     set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 5, &synchronizer_key).await.unwrap();
 
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(5)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::NotEnoughOracles as u32)),
         buy_for(
             &mut banks_client,
             &payer,
@@ -705,7 +705,7 @@ async fn test_synchronizer_public_api() {
     );
 
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(5)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::NotEnoughOracles as u32)),
         sell_for(
             &mut banks_client,
             &payer,
@@ -759,7 +759,7 @@ async fn test_synchronizer_public_api() {
     transaction.sign(&[&payer, &user_key, &synchronizer_key, oracles[0]], recent_blockhash);
 
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(4)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32)),
         banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
     );
 
@@ -786,7 +786,7 @@ async fn test_synchronizer_public_api() {
     transaction.sign(&[&payer, &user_key, &synchronizer_key, oracles[0]], recent_blockhash);
 
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(4)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32)),
         banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
     );
 
@@ -822,7 +822,7 @@ async fn test_synchronizer_public_api() {
     transaction.sign(&[&payer, &user_key, &synchronizer_key, oracles[0]], recent_blockhash);
 
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(4)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32)),
         banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
     );
 
@@ -849,7 +849,7 @@ async fn test_synchronizer_public_api() {
     transaction.sign(&[&payer, &user_key, &synchronizer_key, oracles[0]], recent_blockhash);
 
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(4)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32)),
         banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
     );
 
@@ -886,7 +886,7 @@ async fn test_synchronizer_public_api() {
     transaction.sign(&[&payer, &user_key, &synchronizer_key, oracles[0]], recent_blockhash);
 
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(4)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32)),
         banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
     );
 
@@ -913,7 +913,7 @@ async fn test_synchronizer_public_api() {
     transaction.sign(&[&payer, &user_key, &synchronizer_key, oracles[0]], recent_blockhash);
 
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(4)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32)),
         banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
     );
 
@@ -942,7 +942,7 @@ async fn test_synchronizer_public_api() {
     transaction.sign(&[&payer, &user_key, &synchronizer_key, &fake_oracle], recent_blockhash);
 
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(6)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::BadOracle as u32)),
         banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
     );
 
@@ -969,7 +969,7 @@ async fn test_synchronizer_public_api() {
     transaction.sign(&[&payer, &user_key, &synchronizer_key, &fake_oracle], recent_blockhash);
 
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::Custom(6)),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::BadOracle as u32)),
         banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
     );
 
@@ -1063,15 +1063,15 @@ async fn test_synchronizer_admin_setters() {
 
     assert_eq!(
         set_remaining_dollar_cap(&mut banks_client, &payer, &recent_blockhash, 250_000_000_000, &badowner_synchronizer_key).await.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::Custom(4))
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32))
     );
     assert_eq!(
         set_collateral_token(&mut banks_client, &payer, &recent_blockhash, &Pubkey::new_unique(), &badowner_synchronizer_key).await.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::Custom(4))
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32))
     );
     assert_eq!(
         set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 123, &badowner_synchronizer_key).await.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::Custom(4))
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32))
     );
 
     // BadCase: account not initialized
@@ -1093,15 +1093,15 @@ async fn test_synchronizer_admin_setters() {
 
     assert_eq!(
         set_remaining_dollar_cap(&mut banks_client, &payer, &recent_blockhash, 250_000_000_000, &fake_synchronizer_key).await.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::Custom(1))
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::NotInitialized as u32))
     );
     assert_eq!(
         set_collateral_token(&mut banks_client, &payer, &recent_blockhash, &Pubkey::new_unique(), &fake_synchronizer_key).await.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::Custom(1))
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::NotInitialized as u32))
     );
     assert_eq!(
         set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 123, &fake_synchronizer_key).await.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::Custom(1))
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::NotInitialized as u32))
     );
 
     // BadCase: bad signer
