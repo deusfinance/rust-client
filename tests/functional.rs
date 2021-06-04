@@ -613,6 +613,59 @@ async fn test_synchronizer_public_api() {
     assert_eq!(synchronizer.remaining_dollar_cap, 300_000_000_000 + (collateral_amount * mul_stocks));
     assert_eq!(synchronizer.withdrawable_fee_amount, 100_000_000 + collateral_fee);
 
+    // Test buy_for instruction 2
+    let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
+    let remaining_dollar_cap_before = synchronizer.remaining_dollar_cap;
+    let withdrawable_fee_amount_before = synchronizer.withdrawable_fee_amount;
+    let user_fiat_balance_before = get_token_balance(&mut banks_client, &user_fiat_account.pubkey()).await;
+    let sync_collateral_balance_before = get_token_balance(&mut banks_client, &synchronizer_collateral_account.pubkey()).await;
+    let user_collateral_balance_before = get_token_balance(&mut banks_client, &user_collateral_account.pubkey()).await;
+
+    let mul_stocks = 2;
+    let fee = spl_token::ui_amount_to_amount(0.001, decimals);
+    let prices = vec![
+        spl_token::ui_amount_to_amount(0.5, decimals),
+    ];
+
+    let buy_fiat_amount = spl_token::ui_amount_to_amount(15.1015, decimals);
+    buy_for(
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        mul_stocks,
+        buy_fiat_amount,
+        fee,
+        &prices,
+        &oracles,
+        &fiat_token_key.pubkey(),
+        &user_collateral_account.pubkey(),
+        &user_fiat_account.pubkey(),
+        &synchronizer_collateral_account.pubkey(),
+        &user_key,
+        &synchronizer_key
+    ).await.unwrap();
+
+    // Check balances after buy_for
+    assert_eq!(
+        get_token_balance(&mut banks_client, &user_fiat_account.pubkey()).await,
+        user_fiat_balance_before + buy_fiat_amount
+    );
+
+    let collateral_amount: u64 = 7_550_750_000; // amount * price
+    let collateral_fee: u64 = 7_550_750; // collateral_amount * fee
+    assert_eq!(
+        get_token_balance(&mut banks_client, &synchronizer_collateral_account.pubkey()).await,
+        sync_collateral_balance_before + (collateral_amount + collateral_fee)
+    );
+    assert_eq!(
+        get_token_balance(&mut banks_client, &user_collateral_account.pubkey()).await,
+        user_collateral_balance_before - (collateral_amount + collateral_fee)
+    );
+
+    let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
+    assert_eq!(synchronizer.remaining_dollar_cap, remaining_dollar_cap_before - (collateral_amount * mul_stocks));
+    assert_eq!(synchronizer.withdrawable_fee_amount, withdrawable_fee_amount_before + collateral_fee);
+
     // Case: too big amount
     let mut amount = get_token_balance(&mut banks_client, &user_collateral_account.pubkey()).await;
     amount += spl_token::ui_amount_to_amount(500.0, decimals);
