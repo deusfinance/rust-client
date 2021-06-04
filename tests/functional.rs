@@ -253,6 +253,28 @@ async fn set_minimum_required_signature(
     Ok(())
 }
 
+async fn set_oracles(
+    banks_client: &mut BanksClient,
+    payer: &Keypair,
+    recent_blockhash: &Hash,
+    oracles: &Vec<Pubkey>,
+    synchronizer_authority: &Keypair
+) -> Result<(), TransportError> {
+    let mut transaction = Transaction::new_with_payer(
+        &[synchronizer::instruction::set_oracles(
+                &id(),
+                oracles,
+                &synchronizer_authority.pubkey(),
+            )
+            .unwrap()
+        ],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[payer, synchronizer_authority], *recent_blockhash);
+    banks_client.process_transaction(transaction).await?;
+    Ok(())
+}
+
 async fn sell_for(
     banks_client: &mut BanksClient,
     payer: &Keypair,
@@ -973,7 +995,36 @@ async fn test_synchronizer_public_api() {
         banks_client.process_transaction(transaction).await.unwrap_err().unwrap()
     );
 
-    // TODO: Set fake oracle as good and test
+    // Case: Set fake oracle as good
+    set_oracles(&mut banks_client, &payer, &recent_blockhash, &vec![fake_oracle.pubkey()], &synchronizer_key).await.unwrap();
+
+    buy_for(&mut banks_client, &payer, &recent_blockhash,
+        2,
+        53_000_000_000,
+        1_000_000,
+        &prices,
+        &vec![&fake_oracle],
+        &fiat_token_key.pubkey(),
+        &user_collateral_account.pubkey(),
+        &user_fiat_account.pubkey(),
+        &synchronizer_collateral_account.pubkey(),
+        &user_key,
+        &synchronizer_key
+    ).await.unwrap();
+
+    sell_for(&mut banks_client, &payer, &recent_blockhash,
+        2,
+        53_000_000_000,
+        1_000_000,
+        &prices,
+        &vec![&fake_oracle],
+        &fiat_token_key.pubkey(),
+        &user_collateral_account.pubkey(),
+        &user_fiat_account.pubkey(),
+        &synchronizer_collateral_account.pubkey(),
+        &user_key,
+        &synchronizer_key
+    ).await.unwrap();
 }
 
 #[tokio::test]
@@ -1029,20 +1080,50 @@ async fn test_synchronizer_admin_setters() {
     assert_eq!(synchronizer.remaining_dollar_cap, 123500_000_000_000);
     assert_eq!(synchronizer.minimum_required_signature, 2);
 
-    set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 123, &synchronizer_key).await.unwrap();
+    set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 9, &synchronizer_key).await.unwrap();
     let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
     assert_eq!(synchronizer.collateral_token_key, collateral_token_key.pubkey());
     assert_eq!(synchronizer.remaining_dollar_cap, 123500_000_000_000);
-    assert_eq!(synchronizer.minimum_required_signature, 123);
+    assert_eq!(synchronizer.minimum_required_signature, 9);
 
     let new_token_key = Pubkey::new_unique();
     set_collateral_token(&mut banks_client, &payer, &recent_blockhash, &new_token_key, &synchronizer_key).await.unwrap();
     let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
     assert_eq!(synchronizer.collateral_token_key, new_token_key);
     assert_eq!(synchronizer.remaining_dollar_cap, 123500_000_000_000);
-    assert_eq!(synchronizer.minimum_required_signature, 123);
+    assert_eq!(synchronizer.minimum_required_signature, 9);
 
-    // TODO: set oracles instruction
+    // BadCase: limit exceed
+    let oracles = vec![
+        Keypair::new(), Keypair::new(),
+        Keypair::new(), Keypair::new(),
+        Keypair::new(), Keypair::new(),
+        Keypair::new(), Keypair::new(),
+        Keypair::new(), Keypair::new(),
+        Keypair::new(),
+    ];
+    let oracles_pubkeys = oracles.iter().map(|k| k.pubkey()).collect();
+    assert_eq!(
+        set_oracles(&mut banks_client, &payer, &recent_blockhash, &oracles_pubkeys, &synchronizer_key).await.unwrap_err().unwrap(),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::MaxOraclesExceed as u32))
+    );
+
+    let oracles = vec![
+        Keypair::new(), Keypair::new(),
+        Keypair::new(), Keypair::new(),
+        Keypair::new(), Keypair::new(),
+        Keypair::new(), Keypair::new(),
+        Keypair::new(), Keypair::new(),
+    ];
+    let oracles_pubkeys = oracles.iter().map(|k| k.pubkey()).collect();
+    set_oracles(&mut banks_client, &payer, &recent_blockhash, &oracles_pubkeys, &synchronizer_key).await.unwrap();
+    let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
+    for (i, oracle) in oracles_pubkeys.iter().enumerate() {
+        assert_eq!(
+            synchronizer.oracles[i],
+            *oracle
+        )
+    }
 
     // BadCase: bad account owner
     let badowner_synchronizer_key = Keypair::new();
@@ -1070,7 +1151,7 @@ async fn test_synchronizer_admin_setters() {
         TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32))
     );
     assert_eq!(
-        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 123, &badowner_synchronizer_key).await.unwrap_err().unwrap(),
+        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 9, &badowner_synchronizer_key).await.unwrap_err().unwrap(),
         TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32))
     );
 
@@ -1100,8 +1181,14 @@ async fn test_synchronizer_admin_setters() {
         TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::NotInitialized as u32))
     );
     assert_eq!(
-        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 123, &fake_synchronizer_key).await.unwrap_err().unwrap(),
+        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 9, &fake_synchronizer_key).await.unwrap_err().unwrap(),
         TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::NotInitialized as u32))
+    );
+
+    // BadCase: limit exceed
+    assert_eq!(
+        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 123, &fake_synchronizer_key).await.unwrap_err().unwrap(),
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::MaxOraclesExceed as u32))
     );
 
     // BadCase: bad signer
@@ -1127,7 +1214,7 @@ async fn test_synchronizer_admin_setters() {
     let mut transaction = Transaction::new_with_payer(
         &[synchronizer::instruction::set_minimum_required_signature(
                 &id(),
-                123,
+                9,
                 &synchronizer_key.pubkey(),
             )
             .unwrap()

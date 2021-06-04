@@ -319,6 +319,10 @@ pub fn process_initialize_synchronizer_account(
         return Err(SynchronizerError::InvalidSigner.into());
     }
 
+    if oracles.len() > MAX_ORACLES {
+        return Err(SynchronizerError::MaxOraclesExceed.into());
+    }
+
     let rent = &Rent::from_account_info(rent_account_info)?;
     let account_data_len = synchronizer_account_info.data_len();
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
@@ -357,6 +361,10 @@ pub fn process_set_minimum_required_signature(
 
     if !synchronizer_account_info.is_signer {
         return Err(SynchronizerError::InvalidSigner.into());
+    }
+
+    if minimum_required_signature > MAX_ORACLES as u64 {
+        return Err(SynchronizerError::MaxOraclesExceed.into());
     }
 
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
@@ -440,16 +448,19 @@ pub fn process_set_oracles(
         return Err(SynchronizerError::InvalidSigner.into());
     }
 
+    if oracles.len() > MAX_ORACLES {
+        return Err(SynchronizerError::MaxOraclesExceed.into());
+    }
+
     let mut synchronizer = SynchronizerData::unpack_unchecked(&synchronizer_account_info.data.borrow())?;
     if !synchronizer.is_initialized {
         return Err(SynchronizerError::NotInitialized.into());
     }
 
-    if oracles.len() > MAX_ORACLES {
-        return Err(SynchronizerError::MaxOraclesExceed.into());
-    }
-
     msg!("Set oracles {:?}", oracles);
+    for i in 0..MAX_ORACLES {
+        synchronizer.oracles[i] = Pubkey::default();
+    }
     for (i, oracle) in oracles.iter().enumerate() {
         synchronizer.oracles[i] = *oracle;
     }
@@ -675,7 +686,7 @@ mod test {
     use solana_sdk::{
         account::{create_is_signer_account_infos,Account as SolanaAccount,create_account_for_test},
     };
-    use spl_token::{state::{Account, Mint}, processor::Processor as SPLTokenProcessor};
+    use spl_token::{processor::Processor as SPLTokenProcessor, state::{Account, Mint}, ui_amount_to_amount};
     use super::*;
 
     fn mint_minimum_balance() -> u64 {
@@ -1257,7 +1268,80 @@ mod test {
             )
         );
 
-        // TODO: set_oracles_intruction needed
+        // BadCase: too much oracles (11)
+        let prices = vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+        let oracles = vec![
+            Pubkey::new_unique(), Pubkey::new_unique(),
+            Pubkey::new_unique(), Pubkey::new_unique(),
+            Pubkey::new_unique(), Pubkey::new_unique(),
+            Pubkey::new_unique(), Pubkey::new_unique(),
+            Pubkey::new_unique(), Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        ];
+        assert_eq!(
+            Err(SynchronizerError::MaxOraclesExceed.into()),
+            do_process(
+                crate::instruction::set_oracles(
+                    program_id,
+                    &oracles,
+                    &synchronizer_key
+                ).unwrap(),
+                vec![
+                    &mut synchronizer_account,
+                ]
+            )
+        );
+
+        let oracles = vec![
+            Pubkey::new_unique(), Pubkey::new_unique(),
+            Pubkey::new_unique(), Pubkey::new_unique(),
+            Pubkey::new_unique(), Pubkey::new_unique(),
+            Pubkey::new_unique(), Pubkey::new_unique(),
+            Pubkey::new_unique(), Pubkey::new_unique(),
+        ];
+        let mut or1 = SolanaAccount::default();
+        let mut or2 = SolanaAccount::default();
+        let mut or3 = SolanaAccount::default();
+        let mut or4 = SolanaAccount::default();
+        let mut or5 = SolanaAccount::default();
+        let mut or6 = SolanaAccount::default();
+        let mut or7 = SolanaAccount::default();
+        let mut or8 = SolanaAccount::default();
+        let mut or9 = SolanaAccount::default();
+        let mut or10 = SolanaAccount::default();
+        do_process(
+            crate::instruction::set_oracles(
+                program_id,
+                &oracles,
+                &synchronizer_key
+            ).unwrap(),
+            vec![
+                &mut synchronizer_account,
+            ]
+        ).unwrap();
+
+        let sell_fiat_amount = ui_amount_to_amount(10.0, decimals);
+        do_process(
+            crate::instruction::sell_for(
+                program_id,
+                mul_stocks,
+                sell_fiat_amount,
+                fee,
+                &prices,
+                &oracles,
+                &fiat_asset_key,
+                &user_collateral_key,
+                &user_fiat_key,
+                &synchronizer_collateral_key,
+                &user_key,
+                &synchronizer_key
+            ).unwrap(),
+            vec![&mut fiat_asset_mint, &mut user_collateral_account, &mut user_fiat_account,
+                &mut synchronizer_collateral_account, &mut user_account, &mut synchronizer_account, &mut spl_token_account,
+                &mut or1, &mut or2, &mut or3, &mut or4, &mut or5,
+                &mut or6, &mut or7, &mut or8, &mut or9, &mut or10,
+            ]
+        ).unwrap();
     }
 
     #[test]
@@ -1271,7 +1355,7 @@ mod test {
         assert_eq!(
             Err(SynchronizerError::AccessDenied.into()),
             do_process(
-                crate::instruction::set_minimum_required_signature(&id(), 123456, &synchronizer_key).unwrap(),
+                crate::instruction::set_minimum_required_signature(&id(), 9, &synchronizer_key).unwrap(),
                 vec![&mut fake_acc]
             )
         );
@@ -1294,7 +1378,7 @@ mod test {
         assert_eq!(
             Err(SynchronizerError::NotInitialized.into()),
             do_process(
-                crate::instruction::set_minimum_required_signature(&id(), 123456, &synchronizer_key).unwrap(),
+                crate::instruction::set_minimum_required_signature(&id(), 9, &synchronizer_key).unwrap(),
                 vec![&mut synchronizer_account]
             )
         );
@@ -1309,6 +1393,15 @@ mod test {
             Err(SynchronizerError::NotInitialized.into()),
             do_process(
                 crate::instruction::set_collateral_token(&id(), &Pubkey::new_unique(), &synchronizer_key).unwrap(),
+                vec![&mut synchronizer_account]
+            )
+        );
+
+        // BadCase: limit exceed
+        assert_eq!(
+            Err(SynchronizerError::MaxOraclesExceed.into()),
+            do_process(
+                crate::instruction::set_minimum_required_signature(&id(), 123, &synchronizer_key).unwrap(),
                 vec![&mut synchronizer_account]
             )
         );
