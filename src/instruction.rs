@@ -5,9 +5,9 @@ use solana_program::{instruction::{AccountMeta, Instruction}, program_error::Pro
 use std::{mem::size_of, convert::TryInto};
 
 /// Maximum known oracles authorities
-pub const MAX_ORACLES: usize = 10;
+pub const MAX_ORACLES: usize = 3;
 /// Maximum oracles signs in transaction
-pub const MAX_SIGNERS: u8 = 5;
+pub const MAX_SIGNERS: u8 = 3;
 
 #[repr(C)]
 #[derive(Clone, Debug, PartialEq)]

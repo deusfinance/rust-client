@@ -757,7 +757,7 @@ async fn test_synchronizer_public_api() {
 
     // Case: Change minimum required signatures
     set_collateral_token(&mut banks_client, &payer, &recent_blockhash, &collateral_token_key.pubkey(), &synchronizer_key).await.unwrap();
-    set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 5, &synchronizer_key).await.unwrap();
+    set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 3, &synchronizer_key).await.unwrap();
 
     assert_eq!(
         TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::NotEnoughOracles as u32)),
@@ -1133,23 +1133,23 @@ async fn test_synchronizer_admin_setters() {
     assert_eq!(synchronizer.remaining_dollar_cap, 123500_000_000_000);
     assert_eq!(synchronizer.minimum_required_signature, 2);
 
-    set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 5, &synchronizer_key).await.unwrap();
+    set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 3, &synchronizer_key).await.unwrap();
     let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
     assert_eq!(synchronizer.collateral_token_key, collateral_token_key.pubkey());
     assert_eq!(synchronizer.remaining_dollar_cap, 123500_000_000_000);
-    assert_eq!(synchronizer.minimum_required_signature, 5);
+    assert_eq!(synchronizer.minimum_required_signature, 3);
 
     let new_token_key = Pubkey::new_unique();
     set_collateral_token(&mut banks_client, &payer, &recent_blockhash, &new_token_key, &synchronizer_key).await.unwrap();
     let synchronizer = get_synchronizer_data(&mut banks_client, &synchronizer_key.pubkey()).await;
     assert_eq!(synchronizer.collateral_token_key, new_token_key);
     assert_eq!(synchronizer.remaining_dollar_cap, 123500_000_000_000);
-    assert_eq!(synchronizer.minimum_required_signature, 5);
+    assert_eq!(synchronizer.minimum_required_signature, 3);
 
     // BadCase: limit exceed
     assert_eq!(
         set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 9, &synchronizer_key).await.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::MaxSignersExceed as u32))
+        TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::MaxOraclesExceed as u32))
     );
 
     let oracles = vec![
@@ -1168,10 +1168,7 @@ async fn test_synchronizer_admin_setters() {
 
     let oracles = vec![
         Keypair::new(), Keypair::new(),
-        Keypair::new(), Keypair::new(),
-        Keypair::new(), Keypair::new(),
-        Keypair::new(), Keypair::new(),
-        Keypair::new(), Keypair::new(),
+        Keypair::new(),
     ];
     let oracles_pubkeys = oracles.iter().map(|k| k.pubkey()).collect();
     set_oracles(&mut banks_client, &payer, &recent_blockhash, &oracles_pubkeys, &synchronizer_key).await.unwrap();
@@ -1209,7 +1206,7 @@ async fn test_synchronizer_admin_setters() {
         TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32))
     );
     assert_eq!(
-        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 5, &badowner_synchronizer_key).await.unwrap_err().unwrap(),
+        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 3, &badowner_synchronizer_key).await.unwrap_err().unwrap(),
         TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::AccessDenied as u32))
     );
 
@@ -1239,7 +1236,7 @@ async fn test_synchronizer_admin_setters() {
         TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::NotInitialized as u32))
     );
     assert_eq!(
-        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 5, &fake_synchronizer_key).await.unwrap_err().unwrap(),
+        set_minimum_required_signature(&mut banks_client, &payer, &recent_blockhash, 3, &fake_synchronizer_key).await.unwrap_err().unwrap(),
         TransactionError::InstructionError(0, InstructionError::Custom(SynchronizerError::NotInitialized as u32))
     );
 
@@ -1257,7 +1254,7 @@ async fn test_synchronizer_admin_setters() {
                 &collateral_token_key.pubkey(),
                 remaining_dollar_cap,
                 withdrawable_fee_amount,
-                5,
+                3,
                 &oracles_pubkeys,
                 &fake_synchronizer_key.pubkey(),
             )
@@ -1272,7 +1269,7 @@ async fn test_synchronizer_admin_setters() {
     let mut transaction = Transaction::new_with_payer(
         &[synchronizer::instruction::set_minimum_required_signature(
                 &id(),
-                9,
+                3,
                 &synchronizer_key.pubkey(),
             )
             .unwrap()

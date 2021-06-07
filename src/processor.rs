@@ -1303,21 +1303,12 @@ mod test {
 
         let oracles = vec![
             Pubkey::new_unique(), Pubkey::new_unique(),
-            Pubkey::new_unique(), Pubkey::new_unique(),
-            Pubkey::new_unique(), Pubkey::new_unique(),
-            Pubkey::new_unique(), Pubkey::new_unique(),
-            Pubkey::new_unique(), Pubkey::new_unique(),
+            Pubkey::new_unique(),
         ];
         let mut or1 = SolanaAccount::default();
         let mut or2 = SolanaAccount::default();
         let mut or3 = SolanaAccount::default();
-        let mut or4 = SolanaAccount::default();
-        let mut or5 = SolanaAccount::default();
-        let mut or6 = SolanaAccount::default();
-        let mut or7 = SolanaAccount::default();
-        let mut or8 = SolanaAccount::default();
-        let mut or9 = SolanaAccount::default();
-        let mut or10 = SolanaAccount::default();
+
         do_process(
             crate::instruction::set_oracles(
                 program_id,
@@ -1347,8 +1338,7 @@ mod test {
             ).unwrap(),
             vec![&mut fiat_asset_mint, &mut user_collateral_account, &mut user_fiat_account,
                 &mut synchronizer_collateral_account, &mut user_account, &mut synchronizer_account, &mut spl_token_account,
-                &mut or1, &mut or2, &mut or3, &mut or4, &mut or5,
-                &mut or6, &mut or7, &mut or8, &mut or9, &mut or10,
+                &mut or1, &mut or2, &mut or3
             ]
         ).unwrap();
     }
@@ -1387,7 +1377,7 @@ mod test {
         assert_eq!(
             Err(SynchronizerError::NotInitialized.into()),
             do_process(
-                crate::instruction::set_minimum_required_signature(&id(), 5, &synchronizer_key).unwrap(),
+                crate::instruction::set_minimum_required_signature(&id(), 3, &synchronizer_key).unwrap(),
                 vec![&mut synchronizer_account]
             )
         );
@@ -1411,13 +1401,6 @@ mod test {
             Err(SynchronizerError::MaxOraclesExceed.into()),
             do_process(
                 crate::instruction::set_minimum_required_signature(&id(), 123, &synchronizer_key).unwrap(),
-                vec![&mut synchronizer_account]
-            )
-        );
-        assert_eq!(
-            Err(SynchronizerError::MaxSignersExceed.into()),
-            do_process(
-                crate::instruction::set_minimum_required_signature(&id(), 10, &synchronizer_key).unwrap(),
                 vec![&mut synchronizer_account]
             )
         );
