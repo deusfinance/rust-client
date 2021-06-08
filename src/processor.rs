@@ -1,3 +1,5 @@
+//! Program state processor
+
 use crate::{error::SynchronizerError, instruction::{MAX_ORACLES, MAX_SIGNERS, SynchronizerInstruction}, state::SynchronizerData};
 use num_traits::FromPrimitive;
 use solana_program::{account_info::{next_account_info, AccountInfo}, decode_error::DecodeError, entrypoint::ProgramResult, msg, program::{invoke}, program_error::{PrintProgramError, ProgramError}, program_option::COption, program_pack::Pack, pubkey::Pubkey, rent::Rent, sysvar::Sysvar};
@@ -16,7 +18,7 @@ pub fn check_program_account(program_id: &Pubkey) -> ProgramResult {
 
 pub struct Processor {}
 impl Processor {
-// Scale
+/// Default Scale
 pub const DEFAULT_DECIMALS: u8 = 9;
 
 // Instructions handlers

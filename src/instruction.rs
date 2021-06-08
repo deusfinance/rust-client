@@ -9,21 +9,21 @@ pub const MAX_ORACLES: usize = 10;
 /// Maximum oracles signs in transaction
 pub const MAX_SIGNERS: u8 = 5;
 
+/// Instructions supported by the Synchronizer
 #[repr(C)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum SynchronizerInstruction {
-    // Public Instructions
-
-    // User buys fiat asset for collateral tokens
-    // Accounts expected by this instruction:
-    // 0. [writable] The mint account of fiat asset
-    // 1. [writable] The user collateral token associated account (user source)
-    // 2. [writable] The user fiat asset token associated account (user destination)
-    // 3. [writable] The Synchronizer collateral token associated account (Synchronizer destination)
-    // 4. [signer] The user pubkey authority
-    // 5. [writable, signer] The Synchronizer account authority
-    // 6. [] Token program
-    // 7+N. [] Oracles authority
+    /// User buys fiat asset for collateral tokens
+    /// Accounts expected by this instruction:
+    ///
+    /// 0. `[writable]` The mint account of fiat asset
+    /// 1. `[writable]` The user collateral token associated account (user source)
+    /// 2. `[writable]` The user fiat asset token associated account (user destination)
+    /// 3. `[writable]` The Synchronizer collateral token associated account (Synchronizer destination)
+    /// 4. `[signer]` The user pubkey authority
+    /// 5. `[writable, signer]` The Synchronizer account authority
+    /// 6. `[]` Token program
+    /// 7. `[]` N Oracles authority
     BuyFor {
         multiplier: u64,
         amount: u64,
@@ -31,16 +31,17 @@ pub enum SynchronizerInstruction {
         prices: Vec<u64>,
     },
 
-    // User sells fiat assets for collateral tokens
-    // Accounts expected by this instruction:
-    // 0. [writable] The mint account of fiat asset
-    // 1. [writable] The user collateral token associated account (user destination)
-    // 2. [writable] The user fiat asset token associated account (user source)
-    // 3. [writable] The Synchronizer collateral token associated account (Synchronizer source)
-    // 4. [signer] The user pubkey authority
-    // 5. [writable, signer] The Synchronizer account authority
-    // 6. [] Token program
-    // 7+N. [] Oracles authority
+    /// User sells fiat assets for collateral tokens
+    ///
+    /// Accounts expected by this instruction:
+    /// 0. `[writable]` The mint account of fiat asset
+    /// 1. `[writable]` The user collateral token associated account (user destination)
+    /// 2. `[writable]` The user fiat asset token associated account (user source)
+    /// 3. `[writable]` The Synchronizer collateral token associated account (Synchronizer source)
+    /// 4. `[signer]` The user pubkey authority
+    /// 5. `[writable, signer]` The Synchronizer account authority
+    /// 6. `[]` Token program
+    /// 7. `[]` N Oracles authority
     SellFor {
         multiplier: u64,
         amount: u64,
@@ -48,11 +49,11 @@ pub enum SynchronizerInstruction {
         prices: Vec<u64>,
     },
 
-    // Admin Instructions
-    // Initialization of Synchronizer account
-    // Accounts expected by this instruction:
-    // 0. [writable, signer] The Synchronizer account authority
-    // 1. [] Rent sysvar
+    /// Initialization of Synchronizer account
+    /// Accounts expected by this instruction:
+    ///
+    /// 0. `[writable, signer]` The Synchronizer account authority
+    /// 1. `[]` Rent sysvar
     InitializeSynchronizerAccount {
         collateral_token_key: Pubkey,
         remaining_dollar_cap: u64,
@@ -61,50 +62,56 @@ pub enum SynchronizerInstruction {
         oracles: Vec<Pubkey>,
     },
 
-    // Set minimum required signature
-    // Accounts expected by this instruction:
-    // 0. [signer] The Synchronizer account authority
+    /// Set minimum required signature
+    ///
+    /// Accounts expected by this instruction:
+    /// 0. `[signer]` The Synchronizer account authority
     SetMinimumRequiredSignature {
         minimum_required_signature: u8
     },
 
-    // Set collateral token key
-    // Accounts expected by this instruction:
-    // 0. [signer] The Synchronizer account authority
+    /// Set collateral token key
+    ///
+    /// Accounts expected by this instruction:
+    /// 0. `[signer]` The Synchronizer account authority
     SetCollateralToken {
         collateral_token_key: Pubkey
     },
 
-    // Set remaining dollar cap
-    // Accounts expected by this instruction:
-    // 0. [signer] The Synchronizer account authority
+    /// Set remaining dollar cap
+    ///
+    /// Accounts expected by this instruction:
+    /// 0. `[signer]` The Synchronizer account authority
     SetRemainingDollarCap {
         remaining_dollar_cap: u64
     },
 
-    // Withdraw fee from Synchronizer account to recipient account
-    // Accounts expected by this instruction:
-    // 0. [writable] The Synchronizer collateral token associated account (source)
-    // 1. [writable] recipient collateral token associated account (detination)
-    // 2. [writable, signer] The Synchronizer account authority
-    // 3. [] Token program
+    /// Withdraw fee from Synchronizer account to recipient account
+    ///
+    /// Accounts expected by this instruction:
+    /// 0. `[writable]` The Synchronizer collateral token associated account (source)
+    /// 1. `[writable]` recipient collateral token associated account (detination)
+    /// 2. `[writable, signer]` The Synchronizer account authority
+    /// 3. `[]` Token program
     WithdrawFee {
         amount: u64
     },
 
-    // Withdraw collateral from Synchronizer account to recipient account
-    // Accounts expected by this instruction:
-    // 0. [writable] The Synchronizer collateral token associated account (source)
-    // 1. [writable] recipient collateral token associated account (detination)
-    // 2. [writable, signer] The Synchronizer account authority
-    // 3. [] Token program
+    /// Withdraw collateral from Synchronizer account to recipient account
+    ///
+    /// Accounts expected by this instruction:
+    /// 0. `[writable]` The Synchronizer collateral token associated account (source)
+    /// 1. `[writable]` recipient collateral token associated account (detination)
+    /// 2. `[writable, signer]` The Synchronizer account authority
+    /// 3. `[]` Token program
     WithdrawCollateral {
         amount: u64
     },
 
-    // Set list of known oracles
-    // Accounts expected by this instruction:
-    // 0. [writable, signer] The Synchronizer account authority
+    /// Set list of known oracles
+    ///
+    /// Accounts expected by this instruction:
+    /// 0. `[writable, signer]` The Synchronizer account authority
     SetOracles {
         oracles: Vec<Pubkey>,
     }

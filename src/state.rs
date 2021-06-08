@@ -1,3 +1,5 @@
+//! Synchronizer data
+
 use solana_program::{program_error::ProgramError, program_pack::{IsInitialized, Pack, Sealed}, pubkey::Pubkey};
 use arrayref::{array_mut_ref, array_ref, array_refs, mut_array_refs};
 
@@ -7,12 +9,17 @@ use crate::instruction::MAX_ORACLES;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SynchronizerData {
+    /// Is `true` if this structure has been initialized
     pub is_initialized: bool,
     /// USDC Token address
     pub collateral_token_key: Pubkey,
+    /// Remaining dollar cap
     pub remaining_dollar_cap: u64,
+    /// Withdrawable fee amount
     pub withdrawable_fee_amount: u64,
+    /// Minimum required signatures for sell_for/buy_for instruction
     pub minimum_required_signature: u8,
+    /// Array of public keys of known oracles
     pub oracles: [Pubkey; MAX_ORACLES],
 }
 impl Sealed for SynchronizerData {}
@@ -22,7 +29,8 @@ impl IsInitialized for SynchronizerData {
     }
 }
 impl Pack for SynchronizerData {
-    const LEN: usize = 370; // 1 + 32 + 8 + 8 + 1 + 32 * MAX_ORACLES(10)
+    /// 1 + 32 + 8 + 8 + 1 + 32 * MAX_ORACLES(10)
+    const LEN: usize = 370;
     fn unpack_from_slice(src: &[u8]) -> Result<Self, ProgramError> {
         let src = array_ref![src, 0, 370];
         let (
