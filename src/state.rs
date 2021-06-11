@@ -29,7 +29,7 @@ impl IsInitialized for SynchronizerData {
     }
 }
 impl Pack for SynchronizerData {
-    /// 1 + 32 + 8 + 8 + 1 + 32 * MAX_ORACLES(10)
+    /// 1 + 32 + 8 + 8 + 1 + 32 * MAX_ORACLES(3)
     const LEN: usize = 146;
     fn unpack_from_slice(src: &[u8]) -> Result<Self, ProgramError> {
         let src = array_ref![src, 0, 146];
