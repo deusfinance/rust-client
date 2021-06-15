@@ -6,7 +6,7 @@ use solana_program::{account_info::{next_account_info, AccountInfo}, decode_erro
 use spl_token::{error::TokenError, state::{Account, Mint}};
 
 // Synchronizer program_id
-solana_program::declare_id!("8nNo8sjfYvwouTPQXw5fJ2D6DWzcWsbeXQanDGELt4AG");
+solana_program::declare_id!("3BNQ8AWrFaT9rY6NyYUSxTr81VASVoS9Ra6bbKKfsYdv");
 
 /// Checks that the supplied program ID is the correct
 pub fn check_program_account(program_id: &Pubkey) -> ProgramResult {
